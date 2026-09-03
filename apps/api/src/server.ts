@@ -5,6 +5,9 @@ import {
 import { parseRole } from "./perm.ts";
 import { createFolder, getItem, listChildren, moveItem, renameItem } from "./items.ts";
 import {
+  createBackend, deleteBackend, listBackends, probeBackend, setWriteTarget, updateBackend,
+} from "./backends.ts";
+import {
   addGroupMember, addSpaceMember, createGroup, createSpace, grantItem,
   listItemGrants, listSpaces, removeGroupMember, removeSpaceMember, revokeItemGrant,
   type Subject,
@@ -133,6 +136,42 @@ export const routes = {
       const b = await body<{ subject: Subject }>(req);
       await revokeItemGrant(u, req.params.id, b.subject);
       return new Response(null, { status: 204 });
+    }),
+  },
+
+  "/api/admin/backends": {
+    GET: route(async (req) => { await requireAdmin(req); return json(await listBackends()); }),
+    POST: route(async (req) => {
+      await requireAdmin(req);
+      const b = await body<any>(req);
+      return json(await createBackend(b), 201);
+    }),
+  },
+
+  "/api/admin/backends/:id": {
+    PATCH: route(async (req) => {
+      await requireAdmin(req);
+      return json(await updateBackend(req.params.id, await body<any>(req)));
+    }),
+    DELETE: route(async (req) => {
+      await requireAdmin(req);
+      await deleteBackend(req.params.id);
+      return new Response(null, { status: 204 });
+    }),
+  },
+
+  "/api/admin/backends/:id/write-target": {
+    POST: route(async (req) => {
+      await requireAdmin(req);
+      await setWriteTarget(req.params.id);
+      return new Response(null, { status: 204 });
+    }),
+  },
+
+  "/api/admin/backends/:id/probe": {
+    POST: route(async (req) => {
+      await requireAdmin(req);
+      return json(await probeBackend(req.params.id));
     }),
   },
 };

@@ -1,6 +1,14 @@
 import { sql } from "../src/db.ts";
 import { login, register } from "../src/auth.ts";
 import { serve } from "../src/server.ts";
+import type { S3Config } from "../src/storage/s3.ts";
+
+export const devConfig: S3Config = {
+  endpoint: process.env.DEV_S3_ENDPOINT!,
+  bucket: process.env.DEV_S3_BUCKET!,
+  accessKeyId: process.env.DEV_S3_KEY!,
+  secretAccessKey: process.env.DEV_S3_SECRET!,
+};
 
 export async function resetDb() {
   await sql`TRUNCATE users, groups, group_members, spaces, space_members,
