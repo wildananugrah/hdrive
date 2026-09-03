@@ -214,3 +214,47 @@ test("PATCH /api/admin/users/:id promotes and demotes, refuses non-admins, and r
     expect((await patch(admin.token, "not-a-uuid", true)).status).toBe(404);
   });
 });
+
+test("CORS: preflight is answered for the dev origin", async () => {
+  await withServer(async (base) => {
+    const r = await fetch(`${base}/api/auth/login`, {
+      method: "OPTIONS",
+      headers: {
+        origin: "http://localhost:5183",
+        "access-control-request-method": "POST",
+        "access-control-request-headers": "content-type",
+      },
+    });
+    expect(r.status).toBe(204);
+    expect(r.headers.get("access-control-allow-origin")).toBe("http://localhost:5183");
+    expect(r.headers.get("access-control-allow-credentials")).toBe("true");
+    expect(r.headers.get("access-control-allow-methods")).toContain("PATCH");
+    expect(r.headers.get("access-control-allow-headers")?.toLowerCase()).toContain("content-type");
+  });
+});
+
+test("CORS: an allowed origin gets credentialed headers on a real response", async () => {
+  await withServer(async (base) => {
+    const r = await fetch(`${base}/api/health`, { headers: { origin: "http://localhost:5183" } });
+    expect(r.headers.get("access-control-allow-origin")).toBe("http://localhost:5183");
+    expect(r.headers.get("access-control-allow-credentials")).toBe("true");
+    expect(r.headers.get("vary")?.toLowerCase()).toContain("origin");
+  });
+});
+
+test("CORS: a foreign origin is NOT echoed back", async () => {
+  await withServer(async (base) => {
+    const r = await fetch(`${base}/api/health`, { headers: { origin: "http://evil.example" } });
+    expect(r.headers.get("access-control-allow-origin")).toBeNull();
+    expect(r.status).toBe(200); // same-origin/non-browser callers still work
+  });
+});
+
+test("CORS: a foreign origin also gets no credentialed headers on a 404", async () => {
+  await withServer(async (base) => {
+    const r = await fetch(`${base}/api/does-not-exist`, { headers: { origin: "http://evil.example" } });
+    expect(r.status).toBe(404);
+    expect(r.headers.get("access-control-allow-origin")).toBeNull();
+    expect(r.headers.get("access-control-allow-credentials")).toBeNull();
+  });
+});

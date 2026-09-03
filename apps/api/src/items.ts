@@ -63,11 +63,27 @@ export async function listChildren(user: User, spaceId: string, parentId: string
     await requireSpace(user.id, spaceId, VIEWER);
   }
 
+  // has_grants / has_live_share are computed here, not on the client, so the
+  // VISIBILITY column on a folder listing costs zero extra round trips instead
+  // of one grants call plus one shares call per row (an N+1 with no bulk
+  // endpoint to fall back on). The live-share condition mirrors share.ts's own
+  // notion of live exactly: not revoked, and either never-expiring or not yet
+  // expired.
   const rows = parentId
-    ? await sql`SELECT * FROM items
+    ? await sql`SELECT items.*,
+                       EXISTS (SELECT 1 FROM item_grants g WHERE g.item_id = items.id) AS has_grants,
+                       EXISTS (SELECT 1 FROM share_links s WHERE s.item_id = items.id
+                                 AND s.revoked_at IS NULL
+                                 AND (s.expires_at IS NULL OR s.expires_at > now())) AS has_live_share
+                  FROM items
                  WHERE parent_id = ${parentId} AND deleted_at IS NULL AND status = 'ready'
                  ORDER BY kind DESC, lower(name)`
-    : await sql`SELECT * FROM items
+    : await sql`SELECT items.*,
+                       EXISTS (SELECT 1 FROM item_grants g WHERE g.item_id = items.id) AS has_grants,
+                       EXISTS (SELECT 1 FROM share_links s WHERE s.item_id = items.id
+                                 AND s.revoked_at IS NULL
+                                 AND (s.expires_at IS NULL OR s.expires_at > now())) AS has_live_share
+                  FROM items
                  WHERE space_id = ${spaceId} AND parent_id IS NULL
                    AND deleted_at IS NULL AND status = 'ready'
                  ORDER BY kind DESC, lower(name)`;
@@ -75,6 +91,20 @@ export async function listChildren(user: User, spaceId: string, parentId: string
   return rows.map((r: any) => ({
     ...r, path_ids: parseUuids(r.path_ids), size: r.size === null ? null : Number(r.size),
   })) as Item[];
+}
+
+/**
+ * Every non-deleted, ready folder in a space, flat — so the move picker can
+ * build a full tree in one call instead of walking listChildren level by
+ * level (N calls for N levels).
+ */
+export async function listFolders(user: User, spaceId: string) {
+  await requireSpace(user.id, spaceId, VIEWER);
+  const rows = await sql`
+    SELECT id, name, parent_id, path_ids FROM items
+     WHERE space_id = ${spaceId} AND kind = 'folder' AND deleted_at IS NULL AND status = 'ready'
+     ORDER BY lower(name)`;
+  return rows.map((r: any) => ({ ...r, path_ids: parseUuids(r.path_ids) }));
 }
 
 /**

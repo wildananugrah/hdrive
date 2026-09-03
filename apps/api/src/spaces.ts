@@ -5,9 +5,16 @@ import { OWNER, VIEWER, requireItem, requireSpace } from "./perm.ts";
 
 export type Subject = { type: "user" | "group"; id: string };
 
+/** Canonical uuid check for any id reaching a trust boundary from a param or
+ *  body, so a malformed id is a 400 instead of a Postgres 22P02 (i.e. a 500). */
+export function checkUuid(id: unknown, field: string): string {
+  if (!isUuid(id)) throw new HttpError(400, `${field} must be a uuid`);
+  return id;
+}
+
 function checkSubject(s: Subject) {
   if (s?.type !== "user" && s?.type !== "group") throw new HttpError(400, "subject.type must be user or group");
-  if (!isUuid(s?.id)) throw new HttpError(400, "subject.id must be a uuid");
+  checkUuid(s?.id, "subject.id");
 }
 
 function checkRole(role: number) {
@@ -110,4 +117,42 @@ export async function revokeItemGrant(user: User, itemId: string, subject: Subje
 export async function listItemGrants(user: User, itemId: string) {
   await requireItem(user.id, itemId, OWNER);
   return await sql`SELECT subject_type, subject_id, role FROM item_grants WHERE item_id = ${itemId}`;
+}
+
+/** Groups are org-wide, so listing them is admin-only, matching the mutators. */
+export async function listGroups(user: User) {
+  requireAdminUser(user);
+  return await sql`
+    SELECT g.id, g.name, g.created_at,
+           (SELECT count(*)::int FROM group_members m WHERE m.group_id = g.id) AS member_count
+      FROM groups g ORDER BY lower(g.name)`;
+}
+
+export async function listGroupMembers(user: User, groupId: string) {
+  requireAdminUser(user);
+  checkUuid(groupId, "group id");
+  return await sql`
+    SELECT u.id, u.email, u.name
+      FROM group_members m JOIN users u ON u.id = m.user_id
+     WHERE m.group_id = ${groupId}
+     ORDER BY lower(u.name)`;
+}
+
+/**
+ * Members of a space, with each subject resolved to a display name.
+ * Requires VIEWER on the space: anyone who can see the space can see who is in
+ * it, but a non-member gets the same 404 as a non-existent space.
+ */
+export async function listSpaceMembers(user: User, spaceId: string) {
+  checkUuid(spaceId, "space id");
+  await requireSpace(user.id, spaceId, VIEWER);
+  return await sql`
+    SELECT m.subject_type, m.subject_id, m.role,
+           COALESCE(u.name, g.name) AS name,
+           u.email AS email
+      FROM space_members m
+      LEFT JOIN users  u ON m.subject_type = 'user'  AND u.id = m.subject_id
+      LEFT JOIN groups g ON m.subject_type = 'group' AND g.id = m.subject_id
+     WHERE m.space_id = ${spaceId}
+     ORDER BY m.subject_type, lower(COALESCE(u.name, g.name))`;
 }

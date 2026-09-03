@@ -1,7 +1,7 @@
 import { beforeEach, expect, test } from "bun:test";
 import { parseUuids, sql, uuids } from "../src/db.ts";
 import { EDITOR, VIEWER, requireItem } from "../src/perm.ts";
-import { createFolder, listChildren, moveItem, renameItem } from "../src/items.ts";
+import { createFolder, listChildren, listFolders, moveItem, renameItem } from "../src/items.ts";
 import { addSpaceMember, createSpace } from "../src/spaces.ts";
 import { makeUser, resetDb, withServer } from "./helpers.ts";
 
@@ -303,4 +303,127 @@ test("moving into a folder with a name collision is rejected", async () => {
   await createFolder(owner as any, spaceId, d.id, "b"); // existing sibling named "b" under d
   const b = await createFolder(owner as any, spaceId, null, "b"); // root-level "b"
   await expect(moveItem(owner as any, b.id, d.id)).rejects.toMatchObject({ status: 409 });
+});
+
+// --- Addition A: has_grants / has_live_share on listChildren ---------------
+
+async function childRow(owner: any, spaceId: string, id: string): Promise<any> {
+  const rows = await listChildren(owner, spaceId, null);
+  return (rows as any[]).find((r) => r.id === id)!;
+}
+
+test("listChildren: no grants and no links reports both flags false", async () => {
+  const { owner, spaceId } = await setup();
+  const a = await createFolder(owner as any, spaceId, null, "a");
+  const row = await childRow(owner, spaceId, a.id);
+  expect(row.has_grants).toBe(false);
+  expect(row.has_live_share).toBe(false);
+});
+
+test("listChildren: a grant flips has_grants only", async () => {
+  const { owner, spaceId } = await setup();
+  const a = await createFolder(owner as any, spaceId, null, "a");
+  const guest = await makeUser();
+  await sql`INSERT INTO item_grants (item_id, subject_type, subject_id, role)
+            VALUES (${a.id}, 'user', ${guest.id}, ${VIEWER})`;
+  const row = await childRow(owner, spaceId, a.id);
+  expect(row.has_grants).toBe(true);
+  expect(row.has_live_share).toBe(false);
+});
+
+test("listChildren: a live link flips has_live_share only", async () => {
+  const { owner, spaceId } = await setup();
+  const a = await createFolder(owner as any, spaceId, null, "a");
+  await sql`INSERT INTO share_links (token_hash, item_id, mode, created_by)
+            VALUES (${crypto.randomUUID()}, ${a.id}, 'view', ${owner.id})`;
+  const row = await childRow(owner, spaceId, a.id);
+  expect(row.has_grants).toBe(false);
+  expect(row.has_live_share).toBe(true);
+});
+
+test("listChildren: a revoked link does not count as live", async () => {
+  const { owner, spaceId } = await setup();
+  const a = await createFolder(owner as any, spaceId, null, "a");
+  await sql`INSERT INTO share_links (token_hash, item_id, mode, created_by, revoked_at)
+            VALUES (${crypto.randomUUID()}, ${a.id}, 'view', ${owner.id}, now())`;
+  const row = await childRow(owner, spaceId, a.id);
+  expect(row.has_live_share).toBe(false);
+});
+
+test("listChildren: an expired link does not count as live", async () => {
+  const { owner, spaceId } = await setup();
+  const a = await createFolder(owner as any, spaceId, null, "a");
+  await sql`INSERT INTO share_links (token_hash, item_id, mode, created_by, expires_at)
+            VALUES (${crypto.randomUUID()}, ${a.id}, 'view', ${owner.id}, now() - interval '1 hour')`;
+  const row = await childRow(owner, spaceId, a.id);
+  expect(row.has_live_share).toBe(false);
+});
+
+test("listChildren: a never-expiring, non-revoked link IS live", async () => {
+  const { owner, spaceId } = await setup();
+  const a = await createFolder(owner as any, spaceId, null, "a");
+  await sql`INSERT INTO share_links (token_hash, item_id, mode, created_by, expires_at)
+            VALUES (${crypto.randomUUID()}, ${a.id}, 'view', ${owner.id}, NULL)`;
+  const row = await childRow(owner, spaceId, a.id);
+  expect(row.has_live_share).toBe(true);
+});
+
+// --- Addition B/C: listFolders + path_ids parsing ---------------------------
+
+test("listFolders returns every folder in the space, not files", async () => {
+  const { owner, spaceId } = await setup();
+  const a = await createFolder(owner as any, spaceId, null, "a");
+  const b = await createFolder(owner as any, spaceId, a.id, "b");
+  const fileId = crypto.randomUUID();
+  await sql`INSERT INTO items (id, space_id, parent_id, kind, name, path_ids, created_by, status)
+            VALUES (${fileId}, ${spaceId}, ${a.id}, 'file', 'f.txt', ${uuids([a.id, fileId])}::uuid[], ${owner.id}, 'ready')`;
+
+  const folders = await listFolders(owner as any, spaceId);
+  expect(folders.map((f: any) => f.id).sort()).toEqual([a.id, b.id].sort());
+});
+
+test("listFolders excludes trashed folders", async () => {
+  const { owner, spaceId } = await setup();
+  const a = await createFolder(owner as any, spaceId, null, "a");
+  const b = await createFolder(owner as any, spaceId, null, "b");
+  await sql`UPDATE items SET deleted_at = now() WHERE id = ${b.id}`;
+
+  const folders = await listFolders(owner as any, spaceId);
+  expect(folders.map((f: any) => f.id)).toEqual([a.id]);
+});
+
+test("listFolders' path_ids round-trips as a real array, not the raw {a,b} string", async () => {
+  const { owner, spaceId } = await setup();
+  const a = await createFolder(owner as any, spaceId, null, "a");
+  const b = await createFolder(owner as any, spaceId, a.id, "b");
+
+  const folders = await listFolders(owner as any, spaceId);
+  const row = folders.find((f: any) => f.id === b.id)!;
+  expect(Array.isArray(row.path_ids)).toBe(true);
+  expect(row.path_ids).toEqual([a.id, b.id]);
+});
+
+test("listFolders is gated by VIEWER: a non-member gets 404", async () => {
+  const { spaceId } = await setup();
+  const stranger = await makeUser();
+  await expect(listFolders(stranger as any, spaceId)).rejects.toMatchObject({ status: 404 });
+});
+
+test("GET /api/spaces/:id/folders is reachable over HTTP", async () => {
+  const { owner, spaceId } = await setup();
+  const a = await createFolder(owner as any, spaceId, null, "a");
+  await withServer(async (base) => {
+    const res = await fetch(`${base}/api/spaces/${spaceId}/folders`, {
+      headers: { authorization: `Bearer ${owner.token}` },
+    });
+    expect(res.status).toBe(200);
+    const rows = await res.json();
+    expect(rows.map((r: any) => r.id)).toContain(a.id);
+
+    const stranger = await makeUser();
+    const denied = await fetch(`${base}/api/spaces/${spaceId}/folders`, {
+      headers: { authorization: `Bearer ${stranger.token}` },
+    });
+    expect(denied.status).toBe(404);
+  });
 });

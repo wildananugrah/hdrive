@@ -1,17 +1,18 @@
-import { body, bool, json, route, str, type Req } from "./http.ts";
+import { body, bool, corsHeaders, json, route, str, withCors, type Req } from "./http.ts";
 import {
   clearCookie, listUsers, login, logout, register, requireAdmin, requireUser,
   sessionCookie, setUserAdmin, tokenFrom,
 } from "./auth.ts";
 import { parseRole } from "./perm.ts";
-import { createFolder, getItem, listChildren, patchItem } from "./items.ts";
+import { createFolder, getItem, listChildren, listFolders, patchItem } from "./items.ts";
 import { deleteItem, listTrash, restoreItem } from "./trash.ts";
 import {
   createBackend, deleteBackend, listBackends, probeBackend, setWriteTarget, updateBackend,
 } from "./backends.ts";
 import {
   addGroupMember, addSpaceMember, createGroup, createSpace, grantItem,
-  listItemGrants, listSpaces, removeGroupMember, removeSpaceMember, revokeItemGrant,
+  listGroupMembers, listGroups, listItemGrants, listSpaceMembers, listSpaces,
+  removeGroupMember, removeSpaceMember, revokeItemGrant,
   type Subject,
 } from "./spaces.ts";
 import { beginUpload, completeUpload } from "./upload.ts";
@@ -72,6 +73,7 @@ export const routes = {
   },
 
   "/api/spaces/:id/members": {
+    GET: route(async (req) => json(await listSpaceMembers(await requireUser(req), req.params.id))),
     POST: route(async (req) => {
       const u = await requireUser(req);
       const b = await body<{ subject: Subject; role: string }>(req);
@@ -87,6 +89,7 @@ export const routes = {
   },
 
   "/api/groups": {
+    GET: route(async (req) => json(await listGroups(await requireUser(req)))),
     POST: route(async (req) => {
       const u = await requireAdmin(req);
       const b = await body<Record<string, unknown>>(req);
@@ -95,6 +98,7 @@ export const routes = {
   },
 
   "/api/groups/:id/members": {
+    GET: route(async (req) => json(await listGroupMembers(await requireUser(req), req.params.id))),
     POST: route(async (req) => {
       const u = await requireAdmin(req);
       const b = await body<Record<string, unknown>>(req);
@@ -118,6 +122,7 @@ export const routes = {
   },
 
   "/api/spaces/:id/folders": {
+    GET: route(async (req) => json(await listFolders(await requireUser(req), req.params.id))),
     POST: route(async (req) => {
       const u = await requireUser(req);
       const b = await body<{ name: string; parent_id?: string | null }>(req);
@@ -290,11 +295,26 @@ export const routes = {
   },
 };
 
+const preflight = (origin: string | null) =>
+  new Response(null, {
+    status: 204,
+    headers: {
+      ...corsHeaders(origin),
+      "access-control-allow-methods": "GET, POST, PATCH, DELETE, OPTIONS",
+      "access-control-allow-headers": "content-type, authorization",
+      "access-control-max-age": "600",
+    },
+  });
+
 export function serve(port = Number(process.env.PORT ?? 3011)) {
   return Bun.serve({
     port,
     routes: routes as any,
-    fetch: () => json({ error: "not found" }, 404),
+    async fetch(req) {
+      const origin = req.headers.get("origin");
+      if (req.method === "OPTIONS") return preflight(origin);
+      return withCors(json({ error: "not found" }, 404), origin);
+    },
   });
 }
 

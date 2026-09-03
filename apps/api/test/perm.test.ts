@@ -1,7 +1,10 @@
 import { beforeEach, expect, test } from "bun:test";
 import { sql, uuids } from "../src/db.ts";
 import { EDITOR, OWNER, VIEWER, effectiveRole, requireItem, requireSpace } from "../src/perm.ts";
-import { addGroupMember, addSpaceMember, createGroup, createSpace, listSpaces } from "../src/spaces.ts";
+import {
+  addGroupMember, addSpaceMember, createGroup, createSpace,
+  listGroupMembers, listGroups, listSpaceMembers, listSpaces,
+} from "../src/spaces.ts";
 import { makeUser, resetDb, withServer } from "./helpers.ts";
 
 beforeEach(resetDb);
@@ -248,5 +251,79 @@ test("a non-string name field returns 400 over HTTP, not 500", async () => {
       body: JSON.stringify({ name: 123 }),
     });
     expect(res.status).toBe(400);
+  });
+});
+
+test("listGroups returns groups with member counts, admin only", async () => {
+  const admin = await makeUser({ admin: true });
+  const plain = await makeUser();
+  const g = await createGroup(admin as any, "eng");
+  await addGroupMember(admin as any, g.id, plain.id);
+
+  const rows = await listGroups(admin as any);
+  const eng = rows.find((r: any) => r.id === g.id);
+  expect(eng.name).toBe("eng");
+  expect(eng.member_count).toBe(1);
+
+  await expect(listGroups(plain as any)).rejects.toMatchObject({ status: 403 });
+});
+
+test("listGroupMembers returns members without password hashes", async () => {
+  const admin = await makeUser({ admin: true });
+  const member = await makeUser();
+  const g = await createGroup(admin as any, "eng");
+  await addGroupMember(admin as any, g.id, member.id);
+
+  const rows = await listGroupMembers(admin as any, g.id);
+  expect(rows.map((r: any) => r.id)).toEqual([member.id]);
+  expect(JSON.stringify(rows)).not.toContain("password_hash");
+  expect(JSON.stringify(rows)).not.toContain("$argon2");
+});
+
+test("listSpaceMembers resolves user and group subjects, requires space access", async () => {
+  const owner = await makeUser();
+  const other = await makeUser();
+  const space = await createSpace(owner as any, "S");
+  await addSpaceMember(owner as any, space.id, { type: "user", id: other.id }, VIEWER);
+
+  const rows = await listSpaceMembers(owner as any, space.id);
+  const mine = rows.find((r: any) => r.subject_id === other.id);
+  expect(mine.role).toBe(VIEWER);
+  expect(mine.email).toBe(other.email);
+
+  const stranger = await makeUser();
+  await expect(listSpaceMembers(stranger as any, space.id)).rejects.toMatchObject({ status: 404 });
+});
+
+test("listSpaceMembers never leaks password hashes", async () => {
+  const owner = await makeUser();
+  const space = await createSpace(owner as any, "S");
+  const rows = await listSpaceMembers(owner as any, space.id);
+  expect(JSON.stringify(rows)).not.toContain("password_hash");
+  expect(JSON.stringify(rows)).not.toContain("$argon2");
+});
+
+test("the new list endpoints are reachable and admin-gated over HTTP", async () => {
+  const admin = await makeUser({ admin: true });
+  const plain = await makeUser();
+  const g = await createGroup(admin as any, "eng");
+  const space = await createSpace(plain as any, "S");
+
+  await withServer(async (base) => {
+    const asAdmin = { authorization: `Bearer ${admin.token}` };
+    const asPlain = { authorization: `Bearer ${plain.token}` };
+
+    expect((await fetch(`${base}/api/groups`, { headers: asAdmin })).status).toBe(200);
+    expect((await fetch(`${base}/api/groups`, { headers: asPlain })).status).toBe(403);
+    expect((await fetch(`${base}/api/groups`)).status).toBe(401);
+
+    expect((await fetch(`${base}/api/groups/${g.id}/members`, { headers: asAdmin })).status).toBe(200);
+
+    const m = await fetch(`${base}/api/spaces/${space.id}/members`, { headers: asPlain });
+    expect(m.status).toBe(200);
+    expect((await m.json()).length).toBe(1); // the creator, as OWNER
+
+    const denied = await fetch(`${base}/api/spaces/${space.id}/members`, { headers: asAdmin });
+    expect(denied.status).toBe(404); // admin is not a member; 404 not 403
   });
 });
