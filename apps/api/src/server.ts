@@ -3,6 +3,7 @@ import {
   clearCookie, login, logout, register, requireAdmin, requireUser, sessionCookie, tokenFrom,
 } from "./auth.ts";
 import { parseRole } from "./perm.ts";
+import { createFolder, getItem, listChildren, moveItem, renameItem } from "./items.ts";
 import {
   addGroupMember, addSpaceMember, createGroup, createSpace, grantItem,
   listItemGrants, listSpaces, removeGroupMember, removeSpaceMember, revokeItemGrant,
@@ -89,6 +90,33 @@ export const routes = {
       const b = await body<Record<string, unknown>>(req);
       await removeGroupMember(u, req.params.id, str(b.user_id, "user_id"));
       return new Response(null, { status: 204 });
+    }),
+  },
+
+  "/api/spaces/:id/children": {
+    GET: route(async (req) => {
+      const u = await requireUser(req);
+      const parent = new URL(req.url).searchParams.get("parent");
+      return json(await listChildren(u, req.params.id, parent));
+    }),
+  },
+
+  "/api/spaces/:id/folders": {
+    POST: route(async (req) => {
+      const u = await requireUser(req);
+      const b = await body<{ name: string; parent_id?: string | null }>(req);
+      return json(await createFolder(u, req.params.id, b.parent_id ?? null, b.name), 201);
+    }),
+  },
+
+  "/api/items/:id": {
+    GET: route(async (req) => json(await getItem(await requireUser(req), req.params.id))),
+    PATCH: route(async (req) => {
+      const u = await requireUser(req);
+      const b = await body<{ name?: string; parent_id?: string | null }>(req);
+      if (b.name !== undefined) await renameItem(u, req.params.id, b.name);
+      if (b.parent_id !== undefined) await moveItem(u, req.params.id, b.parent_id);
+      return json(await getItem(u, req.params.id));
     }),
   },
 

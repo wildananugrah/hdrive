@@ -1,0 +1,122 @@
+import { parseUuids, sql, uuids } from "./db.ts";
+import { HttpError } from "./http.ts";
+import type { User } from "./auth.ts";
+import { EDITOR, VIEWER, type Item, requireItem, requireSpace } from "./perm.ts";
+
+/** Names are user-visible and become Content-Disposition filenames. Keep them boring. */
+export function checkName(name: string): string {
+  const n = (name ?? "").trim();
+  if (!n) throw new HttpError(400, "name is required");
+  if (n.length > 255) throw new HttpError(400, "name must be 255 characters or fewer");
+  if (n === "." || n === "..") throw new HttpError(400, "invalid name");
+  if (/[/\\]/.test(n)) throw new HttpError(400, "name may not contain slashes");
+  if ([...n].some((ch) => ch.codePointAt(0)! < 0x20 || ch.codePointAt(0) === 0x7f))
+    throw new HttpError(400, "name may not contain control characters");
+  return n;
+}
+
+/** Unique sibling-name violations come back as 23505 from items_sibling_name. */
+function asConflict(e: any): never {
+  if (e?.errno === "23505") throw new HttpError(409, "an item with that name already exists here");
+  throw e;
+}
+
+async function parentPathFor(user: User, spaceId: string, parentId: string | null): Promise<string[]> {
+  if (!parentId) {
+    await requireSpace(user.id, spaceId, EDITOR);
+    return [];
+  }
+  const parent = await requireItem(user.id, parentId, EDITOR);
+  if (parent.kind !== "folder") throw new HttpError(400, "parent is not a folder");
+  if (parent.space_id !== spaceId) throw new HttpError(400, "parent is in a different space");
+  return parent.path_ids;
+}
+
+export async function createFolder(
+  user: User, spaceId: string, parentId: string | null, name: string,
+): Promise<Item> {
+  const n = checkName(name);
+  const parentPath = await parentPathFor(user, spaceId, parentId);
+  // The id is generated here so path_ids can include self in a single INSERT.
+  const id = crypto.randomUUID();
+  try {
+    const [row] = await sql`
+      INSERT INTO items (id, space_id, parent_id, kind, name, path_ids, created_by, status)
+      VALUES (${id}, ${spaceId}, ${parentId}, 'folder', ${n},
+              ${uuids([...parentPath, id])}::uuid[], ${user.id}, 'ready')
+      RETURNING *`;
+    return { ...row, path_ids: parseUuids(row.path_ids) } as Item;
+  } catch (e) { asConflict(e); }
+}
+
+export async function getItem(user: User, itemId: string): Promise<Item> {
+  return await requireItem(user.id, itemId, VIEWER);
+}
+
+export async function listChildren(user: User, spaceId: string, parentId: string | null) {
+  if (parentId) await requireItem(user.id, parentId, VIEWER);
+  else await requireSpace(user.id, spaceId, VIEWER);
+
+  const rows = parentId
+    ? await sql`SELECT * FROM items
+                 WHERE parent_id = ${parentId} AND deleted_at IS NULL AND status = 'ready'
+                 ORDER BY kind DESC, lower(name)`
+    : await sql`SELECT * FROM items
+                 WHERE space_id = ${spaceId} AND parent_id IS NULL
+                   AND deleted_at IS NULL AND status = 'ready'
+                 ORDER BY kind DESC, lower(name)`;
+
+  return rows.map((r: any) => ({
+    ...r, path_ids: parseUuids(r.path_ids), size: r.size === null ? null : Number(r.size),
+  })) as Item[];
+}
+
+export async function renameItem(user: User, itemId: string, name: string) {
+  const n = checkName(name);
+  await requireItem(user.id, itemId, EDITOR);
+  try {
+    const [row] = await sql`UPDATE items SET name = ${n} WHERE id = ${itemId} RETURNING *`;
+    return { ...row, path_ids: parseUuids(row.path_ids) } as Item;
+  } catch (e) { asConflict(e); }
+}
+
+/**
+ * Moves an item and rewrites path_ids for its entire subtree.
+ *
+ * This is the ONLY place path_ids is mutated. The rewrite replaces the first
+ * `depth` elements (the old ancestor chain plus the item itself) with the new
+ * ancestor chain, keeping each descendant's own tail intact:
+ *
+ *   new = newAncestors || old[depth:]
+ *
+ * For the moved item itself old[depth:] is [item]; for a descendant it is
+ * [item, ...rest]. Postgres arrays are 1-indexed, so old[depth:] starts at the
+ * item's own position.
+ */
+export async function moveItem(user: User, itemId: string, newParentId: string | null) {
+  const item = await requireItem(user.id, itemId, EDITOR);
+
+  let newAncestors: string[];
+  if (newParentId) {
+    if (newParentId === itemId) throw new HttpError(400, "cannot move an item into itself");
+    const parent = await requireItem(user.id, newParentId, EDITOR);
+    if (parent.kind !== "folder") throw new HttpError(400, "target is not a folder");
+    if (parent.space_id !== item.space_id) throw new HttpError(400, "cross-space moves are not supported");
+    // If the target's own path contains this item, the target is a descendant.
+    if (parent.path_ids.includes(itemId)) throw new HttpError(400, "cannot move a folder into its own descendant");
+    newAncestors = parent.path_ids;
+  } else {
+    await requireSpace(user.id, item.space_id, EDITOR);
+    newAncestors = [];
+  }
+
+  const depth = item.path_ids.length;
+  try {
+    await sql.begin(async (tx: any) => {
+      await tx`UPDATE items SET parent_id = ${newParentId} WHERE id = ${itemId}`;
+      await tx`UPDATE items
+                  SET path_ids = ${uuids(newAncestors)}::uuid[] || path_ids[${depth}:]
+                WHERE path_ids @> ARRAY[${itemId}]::uuid[]`;
+    });
+  } catch (e) { asConflict(e); }
+}
