@@ -8,6 +8,10 @@ export type User = { id: string; email: string; name: string; is_admin: boolean 
 const newToken = () =>
   Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString("base64url");
 
+// Verified against when the email is unknown, so an unknown email costs the
+// same argon2id verify as a known email with a wrong password (timing side-channel).
+const DUMMY_HASH = await Bun.password.hash(crypto.randomUUID());
+
 export async function register(email: string, password: string, name: string): Promise<User> {
   const normalized = email.trim().toLowerCase();
   if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(normalized)) throw new HttpError(400, "invalid email");
@@ -33,9 +37,10 @@ export async function login(email: string, password: string) {
     SELECT id, email, name, is_admin, password_hash FROM users
      WHERE email = ${email.trim().toLowerCase()}`;
 
-  // Same error for unknown email and wrong password: no account enumeration.
-  if (!u || !(await Bun.password.verify(password, u.password_hash)))
-    throw new HttpError(401, "invalid credentials");
+  // Same error AND same wall-clock cost for unknown email vs. wrong password:
+  // always verify, even against a dummy hash, so timing can't leak enumeration.
+  const valid = await Bun.password.verify(password, u?.password_hash ?? DUMMY_HASH);
+  if (!u || !valid) throw new HttpError(401, "invalid credentials");
 
   const token = newToken();
   const expires = new Date(Date.now() + SESSION_DAYS * 86400_000);

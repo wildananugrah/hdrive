@@ -47,6 +47,31 @@ test("requireUser rejects a missing, malformed, or unknown token", async () => {
   }
 });
 
+test("login takes comparable time for an unknown email and a known email with a wrong password", async () => {
+  await register("known@b.com", "hunter2hunter2", "K");
+
+  const time = async (email: string, password: string) => {
+    const start = performance.now();
+    await login(email, password).catch(() => {});
+    return performance.now() - start;
+  };
+  const median = (xs: number[]) => xs.slice().sort((a, b) => a - b)[Math.floor(xs.length / 2)];
+
+  const unknown: number[] = [];
+  const wrongPassword: number[] = [];
+  for (let i = 0; i < 5; i++) {
+    unknown.push(await time(`ghost${i}@b.com`, "hunter2hunter2"));
+    wrongPassword.push(await time("known@b.com", "wrongwrongwrong"));
+  }
+
+  const mUnknown = median(unknown);
+  const mWrong = median(wrongPassword);
+  // Generous 3x tolerance either direction so this doesn't flake on a loaded
+  // machine, but tight enough to catch a skipped verify (near-instant reject).
+  expect(mUnknown).toBeLessThan(mWrong * 3);
+  expect(mWrong).toBeLessThan(mUnknown * 3);
+});
+
 test("requireUser rejects an expired session", async () => {
   await register("a@b.com", "hunter2hunter2", "Ada");
   const { token } = await login("a@b.com", "hunter2hunter2");
@@ -80,5 +105,20 @@ test("auth endpoints work over HTTP", async () => {
 
     const anon = await fetch(`${base}/api/auth/me`);
     expect(anon.status).toBe(401);
+  });
+});
+
+test("malformed bodies return 400, not 500", async () => {
+  await withServer(async (base) => {
+    for (const path of ["/api/auth/register", "/api/auth/login"]) {
+      for (const badBody of [{}, { email: 123 }]) {
+        const res = await fetch(`${base}${path}`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(badBody),
+        });
+        expect(res.status).toBe(400);
+      }
+    }
   });
 });

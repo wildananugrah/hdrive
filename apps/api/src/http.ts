@@ -34,3 +34,9 @@ export async function body<T>(req: Request): Promise<T> {
     throw new HttpError(400, "invalid JSON body");
   }
 }
+
+/** Guards a body field is a string before it's passed to a trust-boundary function. */
+export function str(value: unknown, field: string): string {
+  if (typeof value !== "string") throw new HttpError(400, `${field} must be a string`);
+  return value;
+}

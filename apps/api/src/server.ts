@@ -1,4 +1,4 @@
-import { body, json, route, type Req } from "./http.ts";
+import { body, json, route, str, type Req } from "./http.ts";
 import { clearCookie, login, logout, register, requireUser, sessionCookie, tokenFrom } from "./auth.ts";
 
 export const routes = {
@@ -6,15 +6,20 @@ export const routes = {
 
   "/api/auth/register": {
     POST: route(async (req) => {
-      const b = await body<{ email: string; password: string; name: string }>(req);
-      return json(await register(b.email, b.password, b.name), 201);
+      const b = await body<Record<string, unknown>>(req);
+      const email = str(b.email, "email");
+      const password = str(b.password, "password");
+      const name = str(b.name, "name");
+      return json(await register(email, password, name), 201);
     }),
   },
 
   "/api/auth/login": {
     POST: route(async (req) => {
-      const b = await body<{ email: string; password: string }>(req);
-      const { token, user } = await login(b.email, b.password);
+      const b = await body<Record<string, unknown>>(req);
+      const email = str(b.email, "email");
+      const password = str(b.password, "password");
+      const { token, user } = await login(email, password);
       return new Response(JSON.stringify({ user, token }), {
         status: 200,
         headers: { "content-type": "application/json", "set-cookie": sessionCookie(token) },
