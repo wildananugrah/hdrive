@@ -14,7 +14,10 @@ import {
 } from "./spaces.ts";
 import { beginUpload, completeUpload } from "./upload.ts";
 import { serveContent, streamItem } from "./content.ts";
-import { createShare, listShares, resolveShare, revokeShare } from "./share.ts";
+import {
+  createShare, listShares, readUnlockCookie, resolveSharePublic,
+  revokeShare, unlockCookieHeader, unlockShare,
+} from "./share.ts";
 
 export const routes = {
   "/api/health": { GET: route(async () => json({ ok: true })) },
@@ -222,13 +225,30 @@ export const routes = {
     }),
   },
 
+  // Public. Verifies a link's password and, on success, sets a short-lived
+  // cookie scoped to that one link's URL — the password never travels as a
+  // query parameter, so it never lands in access logs, proxy logs, browser
+  // history, or a Referer header.
+  "/s/:token/unlock": {
+    POST: route(async (req) => {
+      const b = await body<{ password?: unknown }>(req);
+      const password = str(b.password ?? "", "password");
+      const { cookieValue } = await unlockShare(req.params.token, password);
+      if (!cookieValue) return new Response(null, { status: 204 });
+      return new Response(null, {
+        status: 204,
+        headers: { "set-cookie": unlockCookieHeader(req.params.token, cookieValue) },
+      });
+    }),
+  },
+
   // Public. The token is the only credential — no session on this route.
   // mode: 'view' vs 'download' only picks the Content-Disposition; it is a UX
   // hint, not access control, since anyone who can view can capture the bytes.
   "/s/:token": {
     GET: route(async (req) => {
-      const password = new URL(req.url).searchParams.get("password") ?? undefined;
-      const { link, item } = await resolveShare(req.params.token, password);
+      const cookie = readUnlockCookie(req.headers.get("cookie"));
+      const { link, item } = await resolveSharePublic(req.params.token, cookie);
       return streamItem(item, req.headers.get("range"), link.mode === "view" ? "inline" : "attachment");
     }),
   },
