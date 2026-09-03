@@ -1,6 +1,7 @@
 import { Navigate, Route, Routes } from "react-router-dom";
 import RequireAuth from "./components/RequireAuth";
 import AppShell from "./routes/AppShell";
+import Files from "./routes/Files";
 import Settings from "./routes/Settings";
 import SignIn from "./routes/SignIn";
 import SpaceRedirect from "./routes/SpaceRedirect";
@@ -13,7 +14,9 @@ export default function App() {
       <Route element={<RequireAuth />}>
         <Route path="/" element={<SpaceRedirect />} />
         <Route element={<AppShell />}>
-          {/* Files, Trash, Video, and Admin screens are added in Tasks 6-11. */}
+          {/* Trash, Video, and Admin screens are added in Tasks 7-11. */}
+          <Route path="/s/:spaceId" element={<Files />} />
+          <Route path="/s/:spaceId/f/:itemId" element={<Files />} />
           <Route path="/settings" element={<Settings />} />
         </Route>
       </Route>

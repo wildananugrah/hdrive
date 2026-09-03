@@ -19,6 +19,10 @@ export type Item = {
   deleted_at: string | null;
   created_by: string;
   created_at: string;
+  // Computed server-side per row (GET .../children) so the list view never has
+  // to fetch grants/shares per item — see visibilityFromFlags.
+  has_grants: boolean;
+  has_live_share: boolean;
 };
 
 export type Subject = { type: "user" | "group"; id: string };

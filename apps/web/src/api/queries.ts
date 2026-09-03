@@ -5,7 +5,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "./client";
 import { isUnauthorized } from "./errors";
-import type { Space, User } from "./types";
+import type { Item, Space, User } from "./types";
 
 // ---- Auth (Task 4) ---------------------------------------------------
 
@@ -47,4 +47,17 @@ export function useLogout() {
 
 export function useSpaces() {
   return useQuery<Space[]>({ queryKey: ["spaces"], queryFn: () => api.get<Space[]>("/api/spaces") });
+}
+
+// ---- Files (Task 6) ---------------------------------------------------
+
+export function useChildren(spaceId: string, parentId: string | null) {
+  return useQuery<Item[]>({
+    queryKey: ["children", spaceId, parentId],
+    queryFn: () =>
+      api.get<Item[]>(
+        `/api/spaces/${spaceId}/children${parentId ? `?parent=${parentId}` : ""}`,
+      ),
+    enabled: Boolean(spaceId),
+  });
 }
