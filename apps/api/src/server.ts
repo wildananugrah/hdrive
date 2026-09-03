@@ -12,6 +12,7 @@ import {
   listItemGrants, listSpaces, removeGroupMember, removeSpaceMember, revokeItemGrant,
   type Subject,
 } from "./spaces.ts";
+import { beginUpload, completeUpload } from "./upload.ts";
 
 export const routes = {
   "/api/health": { GET: route(async () => json({ ok: true })) },
@@ -137,6 +138,18 @@ export const routes = {
       await revokeItemGrant(u, req.params.id, b.subject);
       return new Response(null, { status: 204 });
     }),
+  },
+
+  "/api/spaces/:id/uploads": {
+    POST: route(async (req) => {
+      const u = await requireUser(req);
+      const b = await body<{ name: string; parent_id?: string | null; mime?: string }>(req);
+      return json(await beginUpload(u, req.params.id, b.parent_id ?? null, b.name, b.mime), 201);
+    }),
+  },
+
+  "/api/items/:id/complete": {
+    POST: route(async (req) => json(await completeUpload(await requireUser(req), req.params.id))),
   },
 
   "/api/admin/backends": {
