@@ -373,7 +373,7 @@ git commit -m "feat(web): create spaces and fix the no-space dead end"
 
 **Interfaces:**
 - Consumes: `GET /api/spaces/:id/members` → `{subject_type, subject_id, role, name, email}[]`; `POST` with `{email, role}` or `{subject, role}`; `DELETE` with `{subject}`.
-- Produces: `useAddSpaceMember`, `useUpdateSpaceMemberRole`, `useRemoveSpaceMember`; route `/s/:spaceId/members`.
+- Produces: `useAddSpaceMember`, `useUpdateSpaceMemberRole`, `useRemoveSpaceMember`; route `/space/:spaceId/members`.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -396,7 +396,7 @@ Each mutation invalidates `["spaceMembers", spaceId]`. Roles travel as wire stri
 
 - [ ] **Step 4: Build the screen and route it**
 
-Add `/s/:spaceId/members` inside the authenticated `AppShell` block — **not** as a sibling of `/share/:token`. Reachable from a space menu in the sidebar. Groups are visually marked as groups, because granting to an empty group does nothing. Removing your own OWNER role requires an explicit confirmation naming the consequence: you lose access to the space.
+Add `/space/:spaceId/members` inside the authenticated `AppShell` block — **not** as a sibling of `/share/:token`. Reachable from a space menu in the sidebar. Groups are visually marked as groups, because granting to an empty group does nothing. Removing your own OWNER role requires an explicit confirmation naming the consequence: you lose access to the space.
 
 - [ ] **Step 5: Run to verify they pass**
 

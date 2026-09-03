@@ -8,7 +8,7 @@ import Sidebar from "../src/components/Sidebar";
 import Settings from "../src/routes/Settings";
 import SpaceRedirect from "../src/routes/SpaceRedirect";
 
-const wrap = (ui: React.ReactNode, initial = "/s/space-1") =>
+const wrap = (ui: React.ReactNode, initial = "/space/space-1") =>
   render(
     <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
       <MemoryRouter initialEntries={[initial]}>{ui}</MemoryRouter>
@@ -41,10 +41,10 @@ test("admin navigation is hidden from non-admins and shown to admins", () => {
 
 test("nav links point at the current space", () => {
   wrap(<Sidebar me={plain as any} spaceId="space-1" />);
-  expect(screen.getByText(/my files/i).closest("a")).toHaveAttribute("href", "/s/space-1");
-  expect(screen.getByText(/shared/i).closest("a")).toHaveAttribute("href", "/s/space-1?vis=shared");
-  expect(screen.getByText(/recent/i).closest("a")).toHaveAttribute("href", "/s/space-1?sort=modified");
-  expect(screen.getByText(/trash/i).closest("a")).toHaveAttribute("href", "/s/space-1/trash");
+  expect(screen.getByText(/my files/i).closest("a")).toHaveAttribute("href", "/space/space-1");
+  expect(screen.getByText(/shared/i).closest("a")).toHaveAttribute("href", "/space/space-1?vis=shared");
+  expect(screen.getByText(/recent/i).closest("a")).toHaveAttribute("href", "/space/space-1?sort=modified");
+  expect(screen.getByText(/trash/i).closest("a")).toHaveAttribute("href", "/space/space-1/trash");
 });
 
 test("the space-scoped nav group is omitted (not emitted with a broken href) when there is no space id", () => {
@@ -61,7 +61,7 @@ test("a user with no spaces sees an empty-state message and no redirect happens"
   wrap(
     <Routes>
       <Route path="/" element={<SpaceRedirect />} />
-      <Route path="/s/:spaceId" element={<div>space view</div>} />
+      <Route path="/space/:spaceId" element={<div>space view</div>} />
     </Routes>,
     "/",
   );
@@ -76,7 +76,7 @@ test("a user with spaces is redirected to the first one", async () => {
   wrap(
     <Routes>
       <Route path="/" element={<SpaceRedirect />} />
-      <Route path="/s/:spaceId" element={<div>space view</div>} />
+      <Route path="/space/:spaceId" element={<div>space view</div>} />
     </Routes>,
     "/",
   );
@@ -93,7 +93,7 @@ test("a server error loading spaces shows a retry affordance and does not claim 
   wrap(
     <Routes>
       <Route path="/" element={<SpaceRedirect />} />
-      <Route path="/s/:spaceId" element={<div>space view</div>} />
+      <Route path="/space/:spaceId" element={<div>space view</div>} />
     </Routes>,
     "/",
   );
@@ -110,7 +110,7 @@ test("retrying after a spaces error succeeds and redirects", async () => {
   wrap(
     <Routes>
       <Route path="/" element={<SpaceRedirect />} />
-      <Route path="/s/:spaceId" element={<div>space view</div>} />
+      <Route path="/space/:spaceId" element={<div>space view</div>} />
     </Routes>,
     "/",
   );
@@ -137,7 +137,7 @@ test("settings marks an admin's identity with an Administrator badge", async () 
 });
 
 // --- AppShell: routes with no :spaceId segment must still get a real space
-// id for the sidebar's space-scoped links, not a dead "/s/" href. ---
+// id for the sidebar's space-scoped links, not a dead "/space/" href. ---
 
 const meAndSpacesFetch = (spaces: unknown[]) =>
   vi.fn((url: string) => Promise.resolve(
@@ -155,7 +155,7 @@ test("on a route with no :spaceId (e.g. /settings), the shell resolves the sideb
     "/settings",
   );
   expect(await screen.findByText("settings page")).toBeInTheDocument();
-  expect(screen.getByText(/trash/i).closest("a")).toHaveAttribute("href", "/s/space-7/trash");
+  expect(screen.getByText(/trash/i).closest("a")).toHaveAttribute("href", "/space/space-7/trash");
 });
 
 test("on a route with no :spaceId, a user with no spaces at all gets no space-scoped nav group (no broken hrefs)", async () => {

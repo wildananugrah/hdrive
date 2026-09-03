@@ -10,7 +10,7 @@ export default function AppShell() {
 
   // Routes with no :spaceId segment (e.g. /settings, /admin/*) still need a
   // real space id for the sidebar's space-scoped links — falling back to ""
-  // produced dead hrefs like "/s/". Fall back to the user's first space, and
+  // produced dead hrefs like "/space/". Fall back to the user's first space, and
   // let Sidebar omit that nav group entirely when there is no space at all.
   const spaceId = paramSpaceId ?? spaces?.[0]?.id;
 

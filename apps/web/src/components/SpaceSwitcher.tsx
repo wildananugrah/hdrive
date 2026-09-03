@@ -13,7 +13,7 @@ export default function SpaceSwitcher() {
   return (
     <label className="space-switcher">
       <span className="mono-label">Workspace</span>
-      <select value={spaceId ?? spaces[0].id} onChange={(e) => nav(`/s/${e.target.value}`)}>
+      <select value={spaceId ?? spaces[0].id} onChange={(e) => nav(`/space/${e.target.value}`)}>
         {spaces.map((s) => (
           <option key={s.id} value={s.id}>{s.name}</option>
         ))}

@@ -205,8 +205,8 @@ test("renaming an item invalidates its detail cache — the exact useItem key", 
 
 const renderTrash = () =>
   wrap(
-    <MemoryRouter initialEntries={["/s/s1/trash"]}>
-      <Routes><Route path="/s/:spaceId/trash" element={<Trash />} /></Routes>
+    <MemoryRouter initialEntries={["/space/s1/trash"]}>
+      <Routes><Route path="/space/:spaceId/trash" element={<Trash />} /></Routes>
     </MemoryRouter>,
   );
 

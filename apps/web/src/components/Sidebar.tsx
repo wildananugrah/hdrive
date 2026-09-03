@@ -20,13 +20,13 @@ export default function Sidebar({ me, spaceId }: { me: User; spaceId?: string })
 
       {/* No spaceId means the user has no space to scope these links to
           (e.g. the empty-spaces state, or the id hasn't loaded yet) —
-          render nothing here rather than emit hrefs like "/s/". */}
+          render nothing here rather than emit hrefs like "/space/". */}
       {spaceId && (
         <div className="nav-group">
-          {item(`/s/${spaceId}`, "My files", true)}
-          {item(`/s/${spaceId}?vis=shared`, "Shared")}
-          {item(`/s/${spaceId}?sort=modified`, "Recent")}
-          {item(`/s/${spaceId}/trash`, "Trash")}
+          {item(`/space/${spaceId}`, "My files", true)}
+          {item(`/space/${spaceId}?vis=shared`, "Shared")}
+          {item(`/space/${spaceId}?sort=modified`, "Recent")}
+          {item(`/space/${spaceId}/trash`, "Trash")}
         </div>
       )}
 

@@ -24,9 +24,9 @@ export default function App() {
       <Route element={<RequireAuth />}>
         <Route path="/" element={<SpaceRedirect />} />
         <Route element={<AppShell />}>
-          <Route path="/s/:spaceId" element={<Files />} />
-          <Route path="/s/:spaceId/f/:itemId" element={<Files />} />
-          <Route path="/s/:spaceId/trash" element={<Trash />} />
+          <Route path="/space/:spaceId" element={<Files />} />
+          <Route path="/space/:spaceId/f/:itemId" element={<Files />} />
+          <Route path="/space/:spaceId/trash" element={<Trash />} />
           <Route path="/i/:itemId" element={<Item />} />
           <Route path="/settings" element={<Settings />} />
           {/* requireAdmin enforces this server-side regardless; each screen

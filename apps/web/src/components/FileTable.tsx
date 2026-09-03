@@ -78,7 +78,7 @@ export default function FileTable(
                   // is a plain non-interactive label, not a Link.
                   <span>{it.name}</span>
                 ) : (
-                  <Link to={it.kind === "folder" ? `/s/${spaceId}/f/${it.id}` : `/i/${it.id}`}>
+                  <Link to={it.kind === "folder" ? `/space/${spaceId}/f/${it.id}` : `/i/${it.id}`}>
                     {it.name}
                   </Link>
                 )}

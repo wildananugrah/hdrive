@@ -47,7 +47,7 @@ test("shows a formatted size and a folder shows none", () => {
 test("a folder row links into the folder; a file row links to the item", () => {
   wrap(<FileTable items={[item({ id: "f1", kind: "folder", name: "Docs" }), item()]}
                   spaceId="s1" spaceName="Studio" />);
-  expect(screen.getByText("Docs").closest("a")).toHaveAttribute("href", "/s/s1/f/f1");
+  expect(screen.getByText("Docs").closest("a")).toHaveAttribute("href", "/space/s1/f/f1");
   expect(screen.getByText("report.pdf").closest("a")).toHaveAttribute("href", "/i/i1");
 });
 
@@ -130,11 +130,11 @@ test("Share and Manage access stay enabled for a ready file", async () => {
 const jsonRes = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 
-const renderFiles = (initial = "/s/s1") =>
+const renderFiles = (initial = "/space/s1") =>
   wrap(
     <Routes>
-      <Route path="/s/:spaceId" element={<Files />} />
-      <Route path="/s/:spaceId/f/:itemId" element={<Files />} />
+      <Route path="/space/:spaceId" element={<Files />} />
+      <Route path="/space/:spaceId/f/:itemId" element={<Files />} />
     </Routes>,
     initial,
   );

@@ -19,5 +19,5 @@ export default function SpaceRedirect() {
   }
 
   if (!spaces?.length) return <div className="empty">You are not a member of any space yet.</div>;
-  return <Navigate to={`/s/${spaces[0].id}`} replace />;
+  return <Navigate to={`/space/${spaces[0].id}`} replace />;
 }
