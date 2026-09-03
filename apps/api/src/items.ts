@@ -54,8 +54,12 @@ export async function getItem(user: User, itemId: string): Promise<Item> {
 }
 
 export async function listChildren(user: User, spaceId: string, parentId: string | null) {
-  if (parentId) await requireItem(user.id, parentId, VIEWER);
-  else await requireSpace(user.id, spaceId, VIEWER);
+  if (parentId) {
+    const parent = await requireItem(user.id, parentId, VIEWER);
+    if (parent.space_id !== spaceId) throw new HttpError(400, "parent is in a different space");
+  } else {
+    await requireSpace(user.id, spaceId, VIEWER);
+  }
 
   const rows = parentId
     ? await sql`SELECT * FROM items
@@ -110,9 +114,17 @@ export async function moveItem(user: User, itemId: string, newParentId: string |
     newAncestors = [];
   }
 
-  const depth = item.path_ids.length;
   try {
     await sql.begin(async (tx: any) => {
+      // depth MUST come from a read taken inside this transaction, under a row
+      // lock. The `item` fetched above (outside the transaction) can be stale
+      // by the time we get here: if another moveItem on the same item commits
+      // in between, item.path_ids.length no longer matches the row's current
+      // path_ids, and path_ids[depth:] would slice at the wrong offset,
+      // splicing stale ancestor ids into the item's path. Do not replace this
+      // with the outer `item.path_ids.length` — that reintroduces the race.
+      const [locked] = await tx`SELECT path_ids FROM items WHERE id = ${itemId} FOR UPDATE`;
+      const depth = parseUuids(locked.path_ids).length;
       await tx`UPDATE items SET parent_id = ${newParentId} WHERE id = ${itemId}`;
       await tx`UPDATE items
                   SET path_ids = ${uuids(newAncestors)}::uuid[] || path_ids[${depth}:]
