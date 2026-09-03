@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 
 export default function RowMenu(
-  { onRename, onMove, onDelete }:
-  { onRename: () => void; onMove: () => void; onDelete: () => void },
+  { onRename, onMove, onShare, onDelete }:
+  { onRename: () => void; onMove: () => void; onShare: () => void; onDelete: () => void },
 ) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -25,6 +25,7 @@ export default function RowMenu(
         <ul className="row-menu-list" role="menu">
           <li><button type="button" role="menuitem" onClick={act(onRename)}>Rename</button></li>
           <li><button type="button" role="menuitem" onClick={act(onMove)}>Move</button></li>
+          <li><button type="button" role="menuitem" onClick={act(onShare)}>Share</button></li>
           <li><button type="button" role="menuitem" onClick={act(onDelete)}>Delete</button></li>
         </ul>
       )}

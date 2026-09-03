@@ -549,3 +549,115 @@
 .row-menu-list button:hover {
   background: var(--bg);
 }
+
+.share-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.share-form label {
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.share-form select,
+.share-form input[type="password"] {
+  border: 1px solid var(--border);
+  border-radius: var(--r-control);
+  padding: 8px 10px;
+  font-size: 13.5px;
+  font-family: var(--font-ui);
+}
+
+.share-form button[type="submit"] {
+  margin-top: 4px;
+  border: none;
+  background: var(--brand);
+  color: var(--on-brand);
+  border-radius: var(--r-control);
+  padding: 10px 12px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.share-form button[type="submit"]:disabled {
+  opacity: 0.7;
+  cursor: default;
+}
+
+.share-never {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--warning);
+}
+
+.share-created {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.share-created-row {
+  display: flex;
+  gap: 8px;
+}
+
+.share-created-row input {
+  flex: 1;
+  border: 1px solid var(--border);
+  border-radius: var(--r-control);
+  padding: 8px 10px;
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+}
+
+.share-created-row button {
+  border: none;
+  background: var(--brand);
+  color: var(--on-brand);
+  border-radius: var(--r-control);
+  padding: 8px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.share-existing {
+  margin-top: 20px;
+  padding-top: 16px;
+  border-top: 1px solid var(--divider);
+}
+
+.share-list {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.share-list-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.share-list-row button {
+  margin-left: auto;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--danger);
+  border-radius: var(--r-control);
+  padding: 4px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}

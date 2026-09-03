@@ -7,12 +7,17 @@ import Settings from "./routes/Settings";
 import SignIn from "./routes/SignIn";
 import SpaceRedirect from "./routes/SpaceRedirect";
 import Trash from "./routes/Trash";
+import Unlock from "./routes/share/Unlock";
 import "./styles/shell.css";
 
 export default function App() {
   return (
     <Routes>
       <Route path="/signin" element={<SignIn />} />
+      {/* Public: a share recipient is not signed in, so this must stay
+          outside RequireAuth — inside it, public sharing would break
+          entirely while every existing (authenticated) test still passed. */}
+      <Route path="/share/:token" element={<Unlock />} />
       <Route element={<RequireAuth />}>
         <Route path="/" element={<SpaceRedirect />} />
         <Route element={<AppShell />}>

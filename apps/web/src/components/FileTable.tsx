@@ -9,6 +9,7 @@ import EmptyState from "./EmptyState";
 import MoveModal from "./MoveModal";
 import RenameCell from "./RenameCell";
 import RowMenu from "./RowMenu";
+import ShareModal from "./ShareModal";
 import VisibilityBadge from "./VisibilityBadge";
 
 const conflictMessage = (kind: "rename" | "move") =>
@@ -22,6 +23,7 @@ export default function FileTable(
 ) {
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [movingItem, setMovingItem] = useState<Item | null>(null);
+  const [sharingItem, setSharingItem] = useState<Item | null>(null);
 
   const rename = useRenameItem(spaceId, parentId);
   const move = useMoveItem(spaceId, parentId);
@@ -92,6 +94,7 @@ export default function FileTable(
                 <RowMenu
                   onRename={() => startRename(it.id)}
                   onMove={() => { move.reset(); setMovingItem(it); }}
+                  onShare={() => setSharingItem(it)}
                   onDelete={() => del.mutate(it.id)}
                 />
               </td>
@@ -117,6 +120,7 @@ export default function FileTable(
           onClose={() => setMovingItem(null)}
         />
       )}
+      {sharingItem && <ShareModal item={sharingItem} onClose={() => setSharingItem(null)} />}
     </>
   );
 }

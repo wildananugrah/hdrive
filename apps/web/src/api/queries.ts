@@ -6,7 +6,7 @@ import { useCallback, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, API_BASE } from "./client";
 import { isUnauthorized } from "./errors";
-import type { Item, Space, User } from "./types";
+import type { CreatedShareLink, Item, ShareLink, Space, User } from "./types";
 import { uploadFile, type UploadPhase } from "./upload";
 
 // ---- Auth (Task 4) ---------------------------------------------------
@@ -199,5 +199,35 @@ export function useTrash(spaceId: string) {
     queryKey: ["trash", spaceId],
     queryFn: () => api.get<Item[]>(`/api/spaces/${spaceId}/trash`),
     enabled: Boolean(spaceId),
+  });
+}
+
+// ---- Sharing (Task 10) ---------------------------------------------------
+// listShares can NEVER return a raw token (the API only stores its SHA-256),
+// so ShareLink has no `token` field — CreatedShareLink (token included) only
+// ever comes back from the create mutation's response, once.
+
+export function useShares(itemId: string) {
+  return useQuery<ShareLink[]>({
+    queryKey: ["shares", itemId],
+    queryFn: () => api.get<ShareLink[]>(`/api/items/${itemId}/shares`),
+    enabled: Boolean(itemId),
+  });
+}
+
+export function useCreateShare(itemId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (v: { mode: "view" | "download"; password?: string; expiresInDays?: number | null }) =>
+      api.post<CreatedShareLink>(`/api/items/${itemId}/shares`, v),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["shares", itemId] }),
+  });
+}
+
+export function useRevokeShare(itemId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (linkId: string) => api.del<null>(`/api/shares/${linkId}`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["shares", itemId] }),
   });
 }

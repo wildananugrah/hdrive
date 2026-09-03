@@ -1,0 +1,74 @@
+.share-page {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg);
+  padding: 24px;
+}
+
+.share-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 100%;
+  max-width: 360px;
+  background: var(--surface);
+  border-radius: var(--r-modal);
+  box-shadow: var(--shadow-modal);
+  padding: 28px;
+}
+
+.share-card h1 {
+  margin: 0 0 4px;
+  font-size: 18px;
+}
+
+.share-card label {
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.share-card input {
+  border: 1px solid var(--border);
+  border-radius: var(--r-control);
+  padding: 10px 12px;
+  font-size: 14px;
+  font-family: var(--font-ui);
+}
+
+.share-card button {
+  margin-top: 8px;
+  border: none;
+  background: var(--brand);
+  color: var(--on-brand);
+  border-radius: var(--r-control);
+  padding: 10px 12px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.share-card button:hover:not(:disabled) {
+  background: var(--brand-hover);
+}
+
+.share-card button:disabled {
+  opacity: 0.7;
+  cursor: default;
+}
+
+.share-viewer {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 100%;
+  max-width: 960px;
+  margin: 0 auto;
+}
+
+.share-viewer video {
+  width: 100%;
+  border-radius: var(--r-card);
+  background: var(--sidebar-dark-bg);
+}
