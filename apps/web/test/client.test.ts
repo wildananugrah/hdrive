@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { api } from "../src/api/client";
-import { ApiError, isConflict, isNotFound, isUnauthorized } from "../src/api/errors";
+import { ApiError, isConflict, isForbidden, isNotFound, isUnauthorized, isUnavailable } from "../src/api/errors";
 
 const mockFetch = (status: number, body: unknown, headers: Record<string,string> = {}) =>
   vi.fn().mockResolvedValue(
@@ -44,10 +44,22 @@ test("an error status becomes a typed ApiError carrying the API's message", asyn
 });
 
 test("guards distinguish the statuses the UI branches on", async () => {
-  for (const [status, guard] of [[401, isUnauthorized], [404, isNotFound]] as const) {
+  const table = [
+    [401, isUnauthorized],
+    [403, isForbidden],
+    [404, isNotFound],
+    [409, isConflict],
+    [503, isUnavailable],
+  ] as const;
+  for (const [status, guard] of table) {
     vi.stubGlobal("fetch", mockFetch(status, { error: "nope" }));
     const e = await api.get("/api/items/x").catch((x) => x) as ApiError;
     expect(guard(e)).toBe(true);
+    // Every other guard must reject this status, so a swapped status code
+    // (e.g. isForbidden checking 503 instead of 403) cannot pass silently.
+    for (const [, otherGuard] of table) {
+      if (otherGuard !== guard) expect(otherGuard(e)).toBe(false);
+    }
   }
 });
 

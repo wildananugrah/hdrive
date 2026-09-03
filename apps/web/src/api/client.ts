@@ -26,7 +26,7 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
   const payload = isJson ? await res.json().catch(() => ({})) : null;
 
   if (!res.ok) {
-    const message = (payload as any)?.error ?? res.statusText ?? "request failed";
+    const message = (payload as any)?.error || res.statusText || "request failed";
     throw new ApiError(res.status, message, (payload as any) ?? {});
   }
   return payload as T;
