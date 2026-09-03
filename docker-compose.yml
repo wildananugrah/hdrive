@@ -3,7 +3,10 @@ services:
     image: postgres:16-alpine
     environment:
       POSTGRES_USER: hdrive
-      POSTGRES_PASSWORD: hdrive
+      # Interpolated from the gitignored root .env on a real host; the default
+      # keeps a fresh clone working. NEVER hardcode a real password here — this
+      # file is in git.
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-hdrive}
       POSTGRES_DB: hdrive
     # Bind to loopback ONLY. A bare "5442:5432" publishes on 0.0.0.0, which on a
     # host with a public IP and no firewall exposes Postgres to the internet.
@@ -19,7 +22,7 @@ services:
     image: minio/minio:latest
     environment:
       MINIO_ROOT_USER: hdrive
-      MINIO_ROOT_PASSWORD: hdrive-dev-secret
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-hdrive-dev-secret}
     entrypoint: sh
     command: -c "mkdir -p /data/hdrive /data/hdrive2 && minio server /data --console-address :9001"
     # Loopback only — see the note on postgres above. The console (9201)
