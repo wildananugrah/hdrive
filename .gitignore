@@ -1,3 +1,13 @@
 node_modules/
 dist/
+
+# Every env file is secret-bearing except the checked-in example.
+# `.env` alone does NOT match `.env.production`, which is how production
+# secrets get committed by accident.
 .env
+.env.*
+!.env.example
+
+# Playwright
+test-results/
+playwright-report/
