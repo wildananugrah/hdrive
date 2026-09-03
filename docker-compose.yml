@@ -19,7 +19,7 @@ services:
       MINIO_ROOT_USER: hdrive
       MINIO_ROOT_PASSWORD: hdrive-dev-secret
     entrypoint: sh
-    command: -c "mkdir -p /data/hdrive && minio server /data --console-address :9001"
+    command: -c "mkdir -p /data/hdrive /data/hdrive2 && minio server /data --console-address :9001"
     ports: ["9200:9000", "9201:9001"]
     healthcheck:
       test: ["CMD-SHELL", "curl -sf http://localhost:9000/minio/health/live || exit 1"]

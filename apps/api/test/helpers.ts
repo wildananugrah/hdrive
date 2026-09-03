@@ -10,6 +10,10 @@ export const devConfig: S3Config = {
   secretAccessKey: process.env.DEV_S3_SECRET!,
 };
 
+/** A genuinely separate bucket (not just a second config on the same one), so
+ *  a test can prove an object was deleted from THIS backend and not the other. */
+export const devConfig2: S3Config = { ...devConfig, bucket: process.env.DEV_S3_BUCKET2! };
+
 export async function resetDb() {
   await sql`TRUNCATE users, groups, group_members, spaces, space_members,
                      items, item_grants, storage_backends, share_links, sessions

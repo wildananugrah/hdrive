@@ -4,6 +4,7 @@ import {
 } from "./auth.ts";
 import { parseRole } from "./perm.ts";
 import { createFolder, getItem, listChildren, moveItem, renameItem } from "./items.ts";
+import { deleteItem, listTrash, restoreItem } from "./trash.ts";
 import {
   createBackend, deleteBackend, listBackends, probeBackend, setWriteTarget, updateBackend,
 } from "./backends.ts";
@@ -127,6 +128,21 @@ export const routes = {
       if (b.parent_id !== undefined) await moveItem(u, req.params.id, b.parent_id);
       return json(await getItem(u, req.params.id));
     }),
+    DELETE: route(async (req) => {
+      await deleteItem(await requireUser(req), req.params.id);
+      return new Response(null, { status: 204 });
+    }),
+  },
+
+  "/api/items/:id/restore": {
+    POST: route(async (req) => {
+      await restoreItem(await requireUser(req), req.params.id);
+      return new Response(null, { status: 204 });
+    }),
+  },
+
+  "/api/spaces/:id/trash": {
+    GET: route(async (req) => json(await listTrash(await requireUser(req), req.params.id))),
   },
 
   "/api/items/:id/grants": {
