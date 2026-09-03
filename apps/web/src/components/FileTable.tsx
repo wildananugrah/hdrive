@@ -94,6 +94,7 @@ export default function FileTable(
               <td>{formatDate(it.created_at)}</td>
               <td>
                 <RowMenu
+                  kind={it.kind} status={it.status}
                   onRename={() => startRename(it.id)}
                   onMove={() => { move.reset(); setMovingItem(it); }}
                   onShare={() => setSharingItem(it)}

@@ -1,5 +1,6 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, expect, test, vi } from "vitest";
 import FileTable from "../src/components/FileTable";
@@ -91,6 +92,36 @@ test("a row's visibility badge is computed from has_grants/has_live_share, not h
   expect(screen.getByText("Space")).toBeInTheDocument();
   expect(screen.getByText("Shared")).toBeInTheDocument();
   expect(screen.getByText("Public")).toBeInTheDocument();
+});
+
+// ---- RowMenu — FIX 4: Share/Manage access can't work on a folder or a
+// non-ready item (the API 400s a folder share and a non-ready item share;
+// grants need OWNER on a real item), so disable rather than hide, with a
+// title explaining why. This is what predicate-break #3 targets.
+
+test("Share and Manage access are disabled for a folder row, with a title explaining why", async () => {
+  wrap(<FileTable items={[item({ id: "f1", kind: "folder", name: "Docs" })]} spaceId="s1" spaceName="Studio" />);
+  await userEvent.click(screen.getByRole("button", { name: /item actions/i }));
+  const share = screen.getByRole("menuitem", { name: /share/i });
+  const manage = screen.getByRole("menuitem", { name: /manage access/i });
+  expect(share).toBeDisabled();
+  expect(manage).toBeDisabled();
+  expect(share.getAttribute("title")).toBeTruthy();
+  expect(manage.getAttribute("title")).toBeTruthy();
+});
+
+test("Share and Manage access are disabled for a pending (not-ready) item", async () => {
+  wrap(<FileTable items={[item({ status: "pending" })]} spaceId="s1" spaceName="Studio" />);
+  await userEvent.click(screen.getByRole("button", { name: /item actions/i }));
+  expect(screen.getByRole("menuitem", { name: /share/i })).toBeDisabled();
+  expect(screen.getByRole("menuitem", { name: /manage access/i })).toBeDisabled();
+});
+
+test("Share and Manage access stay enabled for a ready file", async () => {
+  wrap(<FileTable items={[item()]} spaceId="s1" spaceName="Studio" />);
+  await userEvent.click(screen.getByRole("button", { name: /item actions/i }));
+  expect(screen.getByRole("menuitem", { name: /share/i })).toBeEnabled();
+  expect(screen.getByRole("menuitem", { name: /manage access/i })).toBeEnabled();
 });
 
 // ---- Files route — must branch on isError explicitly, never treat a

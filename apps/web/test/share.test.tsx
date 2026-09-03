@@ -7,6 +7,7 @@ import App from "../src/App";
 import FileTable from "../src/components/FileTable";
 import ShareModal from "../src/components/ShareModal";
 import Unlock from "../src/routes/share/Unlock";
+import { useCreateShare, useRevokeShare } from "../src/api/queries";
 import type { Item, ShareLink } from "../src/api/types";
 
 const newClient = () =>
@@ -47,9 +48,15 @@ afterEach(() => vi.unstubAllGlobals());
 // ---- Unlock — from the brief -----------------------------------------------
 
 test("a wrong password says so and lets the viewer retry", async () => {
-  vi.stubGlobal("fetch", vi.fn().mockResolvedValue(res(401, { error: "password required" })));
+  // Two calls happen here (the mount probe, then the submit), each reading
+  // the response body — a Response can only be read once, so this must
+  // build a fresh one per call rather than reuse a single mocked instance.
+  vi.stubGlobal("fetch", vi.fn().mockImplementation(() => Promise.resolve(res(401, { error: "password required" }))));
   wrap(<Unlock />);
-  await userEvent.type(screen.getByLabelText(/password/i), "nope");
+  // The mount probe (empty password) also 401s here, so the form is already
+  // showing by the time we interact with it — see the dedicated probe tests
+  // below for that transition itself.
+  await userEvent.type(await screen.findByLabelText(/password/i), "nope");
   await userEvent.click(screen.getByRole("button", { name: /unlock|view/i }));
   expect(await screen.findByRole("alert")).toHaveTextContent(/password/i);
   expect(screen.getByLabelText(/password/i)).toBeInTheDocument();
@@ -58,14 +65,15 @@ test("a wrong password says so and lets the viewer retry", async () => {
 test("a 404 gives ONE uniform message and no hint about which reason", async () => {
   vi.stubGlobal("fetch", vi.fn().mockResolvedValue(res(404, { error: "link not found or expired" })));
   wrap(<Unlock />);
-  await userEvent.type(screen.getByLabelText(/password/i), "whatever");
-  await userEvent.click(screen.getByRole("button", { name: /unlock|view/i }));
+  // No password prompt for a 404 — the mount probe alone is enough to know
+  // there's nothing to unlock, so no form is ever rendered.
   const alert = await screen.findByRole("alert");
   expect(alert).toHaveTextContent(/not found or expired/i);
   // The API refuses to distinguish these; the UI must not invent a distinction.
   expect(alert.textContent).not.toMatch(/revoked/i);
   expect(alert.textContent).not.toMatch(/deleted/i);
   expect(alert.textContent).not.toMatch(/this link expired/i);
+  expect(screen.queryByLabelText(/password/i)).toBeNull();
 });
 
 test("the unlock page has no app chrome — the viewer is not signed in", () => {
@@ -75,14 +83,44 @@ test("the unlock page has no app chrome — the viewer is not signed in", () => 
   expect(screen.queryByText(/log out/i)).toBeNull();
 });
 
-// ---- Unlock — additional coverage (predicate #2 target) --------------------
+// ---- Unlock — the mount probe (predicate #2 target) ------------------------
+// FIX 3: the backend skips password verification when a link has none, so
+// the old code path — always render the form, submit an empty password to
+// find out — forced every no-password recipient through a click and the
+// nginx unlock rate limit for nothing. Unlock now probes once on mount.
+
+test("a no-password link renders the viewer directly, without ever showing a prompt", async () => {
+  const fetchMock = vi.fn().mockResolvedValue(res(204, null));
+  vi.stubGlobal("fetch", fetchMock);
+  wrap(<Unlock />);
+  expect(await screen.findByTestId("share-video")).toBeInTheDocument();
+  expect(screen.queryByText(/password protected/i)).toBeNull();
+  expect(screen.queryByLabelText(/password/i)).toBeNull();
+  // Exactly one probe call to /unlock, not a loop — ShareView also fires its
+  // own (unrelated) ranged request for the Content-Disposition header, so
+  // this counts only the /unlock calls, not every call fetchMock saw.
+  await waitFor(() => {
+    const unlockCalls = fetchMock.mock.calls.filter(([u]) => String(u).endsWith("/unlock"));
+    expect(unlockCalls).toHaveLength(1);
+  });
+});
+
+test("a password-protected link renders the prompt only after the probe's 401", async () => {
+  const fetchMock = vi.fn().mockResolvedValue(res(401, { error: "password required" }));
+  vi.stubGlobal("fetch", fetchMock);
+  wrap(<Unlock />);
+  // Nothing — not even the form — before the probe resolves.
+  expect(screen.queryByLabelText(/password/i)).toBeNull();
+  expect(await screen.findByLabelText(/password/i)).toBeInTheDocument();
+  expect(screen.getByRole("heading", { name: /password protected/i })).toBeInTheDocument();
+  // The silent probe itself must not surface an error message.
+  expect(screen.queryByRole("alert")).toBeNull();
+});
 
 test("unlocking sends credentials so the short-lived cookie is actually stored", async () => {
   const fetchMock = vi.fn().mockResolvedValue(res(204, null));
   vi.stubGlobal("fetch", fetchMock);
   wrap(<Unlock />);
-  await userEvent.type(screen.getByLabelText(/password/i), "secret");
-  await userEvent.click(screen.getByRole("button", { name: /unlock|view/i }));
   await waitFor(() => expect(fetchMock).toHaveBeenCalled());
   const [url, init] = fetchMock.mock.calls.find(([u]) => String(u).endsWith("/unlock"))!;
   expect(String(url)).toContain("/s/tok123/unlock");
@@ -95,7 +133,6 @@ test("a successful unlock renders the streamed viewer with a credentialed video 
   );
   vi.stubGlobal("fetch", fetchMock);
   wrap(<Unlock />);
-  await userEvent.click(screen.getByRole("button", { name: /unlock|view/i }));
   const video = await screen.findByTestId("share-video");
   expect(video.getAttribute("src")).toContain("/s/tok123");
   expect(video.getAttribute("crossorigin")).toBe("use-credentials");
@@ -109,7 +146,6 @@ test("a view-mode link hides the download button (server's inline Content-Dispos
   );
   vi.stubGlobal("fetch", fetchMock);
   wrap(<Unlock />);
-  await userEvent.click(screen.getByRole("button", { name: /unlock|view/i }));
   await screen.findByTestId("share-video");
   await waitFor(() => expect(screen.queryByRole("link", { name: /download/i })).toBeNull());
 });
@@ -122,7 +158,6 @@ test("a download-mode link shows the download button", async () => {
   );
   vi.stubGlobal("fetch", fetchMock);
   wrap(<Unlock />);
-  await userEvent.click(screen.getByRole("button", { name: /unlock|view/i }));
   await screen.findByTestId("share-video");
   expect(await screen.findByRole("link", { name: /download/i })).toBeInTheDocument();
 });
@@ -223,4 +258,52 @@ test("the row menu offers Share, opening the share modal for that row's item", a
   await waitFor(() =>
     expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining("/api/items/i1/shares"), expect.anything()),
   );
+});
+
+// ---- Cache invalidation — FIX 2 --------------------------------------------
+// The row's visibility badge (Space/Shared/Public) reads has_grants/
+// has_live_share off the ["children", spaceId, parentId] cache (FileTable),
+// which is a different cache entry than ["shares", itemId]. Without also
+// invalidating ["children"], a row created a share for still reads "Space"
+// until the listing is invalidated some other way — and main.tsx disables
+// refetchOnWindowFocus, so it never self-corrects.
+// This is what predicate-break #1 targets.
+
+function CreateShareHarness({ itemId }: { itemId: string }) {
+  const create = useCreateShare(itemId);
+  return <button onClick={() => create.mutate({ mode: "view" })}>create</button>;
+}
+
+function RevokeShareHarness({ itemId }: { itemId: string }) {
+  const revoke = useRevokeShare(itemId);
+  return <button onClick={() => revoke.mutate("sl1")}>revoke</button>;
+}
+
+test("creating a share link invalidates the children listing so the badge updates", async () => {
+  vi.stubGlobal("fetch", vi.fn().mockResolvedValue(res(201, {
+    id: "sl2", mode: "view", expires_at: null, revoked_at: null,
+    created_at: "2026-09-03T00:00:00Z", has_password: false, token: "tok",
+  })));
+  const qc = newClient();
+  const spy = vi.spyOn(qc, "invalidateQueries");
+  wrapModal(<CreateShareHarness itemId="i1" />, qc);
+  await userEvent.click(screen.getByText("create"));
+  await waitFor(() => {
+    expect(spy).toHaveBeenCalledWith({ queryKey: ["shares", "i1"] });
+    // Prefix-matches every ["children", spaceId, parentId] entry — the
+    // component doesn't have spaceId/parentId to invalidate an exact key.
+    expect(spy).toHaveBeenCalledWith({ queryKey: ["children"] });
+  });
+});
+
+test("revoking a share link invalidates the children listing so the badge updates", async () => {
+  vi.stubGlobal("fetch", vi.fn().mockResolvedValue(res(204, null)));
+  const qc = newClient();
+  const spy = vi.spyOn(qc, "invalidateQueries");
+  wrapModal(<RevokeShareHarness itemId="i1" />, qc);
+  await userEvent.click(screen.getByText("revoke"));
+  await waitFor(() => {
+    expect(spy).toHaveBeenCalledWith({ queryKey: ["shares", "i1"] });
+    expect(spy).toHaveBeenCalledWith({ queryKey: ["children"] });
+  });
 });

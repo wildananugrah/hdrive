@@ -1,10 +1,11 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, expect, test, vi } from "vitest";
 import FileTable from "../src/components/FileTable";
 import PermissionsModal from "../src/components/PermissionsModal";
+import { useGrantItem, useRevokeGrant } from "../src/api/queries";
 import type { Grant, Group, Item, SpaceMember } from "../src/api/types";
 
 const newClient = () =>
@@ -141,4 +142,48 @@ test("a 500 loading grants shows a retry affordance, never 'no access'", async (
   expect(await screen.findByRole("alert")).toBeInTheDocument();
   expect(screen.getByRole("button", { name: /retry/i })).toBeInTheDocument();
   expect(screen.queryByText(/no people have/i)).toBeNull();
+});
+
+// ---- Cache invalidation — FIX 2 --------------------------------------------
+// The row's visibility badge reads has_grants off the ["children", spaceId,
+// parentId] cache (FileTable), a different cache entry than ["grants",
+// itemId]. Without also invalidating ["children"], granting/revoking access
+// leaves the badge stale — see the matching share-link tests in share.test.tsx.
+
+function GrantHarness({ itemId }: { itemId: string }) {
+  const grant = useGrantItem(itemId);
+  return (
+    <button onClick={() => grant.mutate({ subject: { type: "user", id: "u2" }, role: "viewer" })}>
+      grant
+    </button>
+  );
+}
+
+function RevokeGrantHarness({ itemId }: { itemId: string }) {
+  const revoke = useRevokeGrant(itemId);
+  return <button onClick={() => revoke.mutate({ type: "user", id: "u2" })}>revoke-grant</button>;
+}
+
+test("granting access invalidates the children listing so the badge updates", async () => {
+  vi.stubGlobal("fetch", vi.fn().mockResolvedValue(res(204, null)));
+  const qc = newClient();
+  const spy = vi.spyOn(qc, "invalidateQueries");
+  wrap(<GrantHarness itemId="i1" />, qc);
+  await userEvent.click(screen.getByText("grant"));
+  await waitFor(() => {
+    expect(spy).toHaveBeenCalledWith({ queryKey: ["grants", "i1"] });
+    expect(spy).toHaveBeenCalledWith({ queryKey: ["children"] });
+  });
+});
+
+test("revoking access invalidates the children listing so the badge updates", async () => {
+  vi.stubGlobal("fetch", vi.fn().mockResolvedValue(res(204, null)));
+  const qc = newClient();
+  const spy = vi.spyOn(qc, "invalidateQueries");
+  wrap(<RevokeGrantHarness itemId="i1" />, qc);
+  await userEvent.click(screen.getByText("revoke-grant"));
+  await waitFor(() => {
+    expect(spy).toHaveBeenCalledWith({ queryKey: ["grants", "i1"] });
+    expect(spy).toHaveBeenCalledWith({ queryKey: ["children"] });
+  });
 });

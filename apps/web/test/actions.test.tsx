@@ -6,7 +6,7 @@ import RenameCell from "../src/components/RenameCell";
 import MoveModal from "../src/components/MoveModal";
 import FileTable from "../src/components/FileTable";
 import Trash from "../src/routes/Trash";
-import { useDeleteItem, useMoveItem } from "../src/api/queries";
+import { useDeleteItem, useMoveItem, useRenameItem } from "../src/api/queries";
 import type { Item } from "../src/api/types";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 
@@ -180,6 +180,25 @@ test("moving an item invalidates every children listing in the space, not just t
   wrap(<MoveHarness />, qc);
   await userEvent.click(screen.getByText("move"));
   await waitFor(() => expect(spy).toHaveBeenCalledWith({ queryKey: ["children", "s1"] }));
+});
+
+function RenameHarness() {
+  const rename = useRenameItem("s1", "p1");
+  return <button onClick={() => rename.mutate({ id: "i1", name: "renamed.txt" })}>rename</button>;
+}
+
+// FIX 5: useItem's detail route reads ["item", itemId]; without this
+// invalidation a renamed item still shows its old name when opened directly.
+test("renaming an item invalidates its detail cache — the exact useItem key", async () => {
+  vi.stubGlobal("fetch", vi.fn(() => Promise.resolve(jsonRes(item({ name: "renamed.txt" })))));
+  const qc = newClient();
+  const spy = vi.spyOn(qc, "invalidateQueries");
+  wrap(<RenameHarness />, qc);
+  await userEvent.click(screen.getByText("rename"));
+  await waitFor(() => {
+    expect(spy).toHaveBeenCalledWith({ queryKey: ["children", "s1", "p1"] });
+    expect(spy).toHaveBeenCalledWith({ queryKey: ["item", "i1"] });
+  });
 });
 
 // ---- Trash route ------------------------------------------------------------

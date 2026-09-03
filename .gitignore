@@ -7,7 +7,13 @@ dist/
 .env
 .env.*
 !.env.example
+# apps/web/.env.production holds only a build-time public value (an empty
+# VITE_API_BASE, for the single-origin deployment) — not a secret — and must
+# be tracked so a fresh clone/CI build doesn't bake in localhost:3011 and
+# ship a dead site. apps/api/.env.production (real secrets) stays ignored.
+!apps/web/.env.production
 
 # Playwright
 test-results/
 playwright-report/
+temps/

@@ -158,7 +158,13 @@ export function useRenameItem(spaceId: string, parentId: string | null) {
   return useMutation({
     mutationFn: (v: { id: string; name: string }) =>
       api.patch<Item>(`/api/items/${v.id}`, { name: v.name }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["children", spaceId, parentId] }),
+    // ["item", id] is what the detail route (useItem) reads — without this a
+    // renamed item still shows its old name when opened, until something
+    // else happens to invalidate it.
+    onSuccess: (_data, v) => {
+      qc.invalidateQueries({ queryKey: ["children", spaceId, parentId] });
+      qc.invalidateQueries({ queryKey: ["item", v.id] });
+    },
   });
 }
 
@@ -170,7 +176,10 @@ export function useMoveItem(spaceId: string, _parentId: string | null) {
     // A move changes two folders' listings (source and destination), so
     // invalidate every children listing in the space rather than just one —
     // this key is a prefix of every ["children", spaceId, parentId] key.
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["children", spaceId] }),
+    onSuccess: (_data, v) => {
+      qc.invalidateQueries({ queryKey: ["children", spaceId] });
+      qc.invalidateQueries({ queryKey: ["item", v.id] });
+    },
   });
 }
 
@@ -178,9 +187,10 @@ export function useDeleteItem(spaceId: string, parentId: string | null) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (id: string) => api.del<null>(`/api/items/${id}`),
-    onSuccess: () => {
+    onSuccess: (_data, id) => {
       qc.invalidateQueries({ queryKey: ["children", spaceId, parentId] });
       qc.invalidateQueries({ queryKey: ["trash", spaceId] });
+      qc.invalidateQueries({ queryKey: ["item", id] });
     },
   });
 }
@@ -222,7 +232,15 @@ export function useCreateShare(itemId: string) {
   return useMutation({
     mutationFn: (v: { mode: "view" | "download"; password?: string; expiresInDays?: number | null }) =>
       api.post<CreatedShareLink>(`/api/items/${itemId}/shares`, v),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["shares", itemId] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["shares", itemId] });
+      // The children listing's has_live_share flag (VisibilityBadge) is a
+      // separate cache from ["shares", itemId]; without this the row still
+      // reads "Space" after creating a public link. ["children"] is a prefix
+      // of every ["children", spaceId, parentId] key, so this doesn't need
+      // spaceId/parentId threaded in here.
+      qc.invalidateQueries({ queryKey: ["children"] });
+    },
   });
 }
 
@@ -230,7 +248,10 @@ export function useRevokeShare(itemId: string) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (linkId: string) => api.del<null>(`/api/shares/${linkId}`),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["shares", itemId] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["shares", itemId] });
+      qc.invalidateQueries({ queryKey: ["children"] });
+    },
   });
 }
 
@@ -250,7 +271,12 @@ export function useGrantItem(itemId: string) {
   return useMutation({
     mutationFn: (v: { subject: Subject; role: "viewer" | "editor" | "owner" }) =>
       api.post<null>(`/api/items/${itemId}/grants`, v),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["grants", itemId] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["grants", itemId] });
+      // Same reasoning as useCreateShare: has_grants on the children listing
+      // is a distinct cache entry that a grant/revoke doesn't otherwise touch.
+      qc.invalidateQueries({ queryKey: ["children"] });
+    },
   });
 }
 
@@ -258,7 +284,10 @@ export function useRevokeGrant(itemId: string) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (subject: Subject) => api.del<null>(`/api/items/${itemId}/grants`, { subject }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["grants", itemId] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["grants", itemId] });
+      qc.invalidateQueries({ queryKey: ["children"] });
+    },
   });
 }
 
