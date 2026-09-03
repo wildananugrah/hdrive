@@ -13,6 +13,7 @@ import {
   type Subject,
 } from "./spaces.ts";
 import { beginUpload, completeUpload } from "./upload.ts";
+import { serveContent } from "./content.ts";
 
 export const routes = {
   "/api/health": { GET: route(async () => json({ ok: true })) },
@@ -150,6 +151,14 @@ export const routes = {
 
   "/api/items/:id/complete": {
     POST: route(async (req) => json(await completeUpload(await requireUser(req), req.params.id))),
+  },
+
+  "/api/items/:id/content": {
+    GET: route(async (req) => {
+      const u = await requireUser(req);
+      const inline = new URL(req.url).searchParams.get("inline") === "1";
+      return serveContent(u, req.params.id, req.headers.get("range"), inline ? "inline" : "attachment");
+    }),
   },
 
   "/api/admin/backends": {
