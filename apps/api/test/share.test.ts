@@ -1,9 +1,12 @@
 import { beforeEach, expect, test } from "bun:test";
 import { sql } from "../src/db.ts";
 import { createBackend, invalidateBackendCache } from "../src/backends.ts";
-import { createShare, listShares, resolveShare, revokeShare } from "../src/share.ts";
+import {
+  createShare, listShares, resolveShare, resolveSharePublic, revokeShare, unlockShare,
+} from "../src/share.ts";
 import { beginUpload, completeUpload } from "../src/upload.ts";
 import { addSpaceMember, createSpace } from "../src/spaces.ts";
+import { deleteItem, restoreItem } from "../src/trash.ts";
 import { EDITOR, VIEWER } from "../src/perm.ts";
 import { devConfig, makeUser, resetDb, withServer } from "./helpers.ts";
 
@@ -53,13 +56,13 @@ test("an explicit never-expires link is allowed", async () => {
   const { owner, itemId } = await uploaded();
   const link = await createShare(owner as any, itemId, { expiresInDays: null });
   expect(link.expires_at).toBeNull();
-  expect((await resolveShare(link.token)).item.id).toBe(itemId);
+  expect((await resolveSharePublic(link.token)).item.id).toBe(itemId);
 });
 
 test("a valid token resolves to the item", async () => {
   const { owner, itemId } = await uploaded();
   const link = await createShare(owner as any, itemId, {});
-  const { item, link: l } = await resolveShare(link.token);
+  const { item, link: l } = await resolveSharePublic(link.token);
   expect(item.id).toBe(itemId);
   expect(l.mode).toBe("view");
   // the resolved link never carries either hash, even for a caller that
@@ -73,18 +76,18 @@ test("an expired link is rejected", async () => {
   const { owner, itemId } = await uploaded();
   const link = await createShare(owner as any, itemId, {});
   await sql`UPDATE share_links SET expires_at = now() - interval '1 minute' WHERE id = ${link.id}`;
-  await expect(resolveShare(link.token)).rejects.toMatchObject({ status: 404 });
+  await expect(resolveSharePublic(link.token)).rejects.toMatchObject({ status: 404 });
 });
 
 test("a revoked link is rejected", async () => {
   const { owner, itemId } = await uploaded();
   const link = await createShare(owner as any, itemId, {});
   await revokeShare(owner as any, link.id);
-  await expect(resolveShare(link.token)).rejects.toMatchObject({ status: 404 });
+  await expect(resolveSharePublic(link.token)).rejects.toMatchObject({ status: 404 });
 });
 
 test("an unknown token is rejected", async () => {
-  await expect(resolveShare("not-a-real-token")).rejects.toMatchObject({ status: 404 });
+  await expect(resolveSharePublic("not-a-real-token")).rejects.toMatchObject({ status: 404 });
 });
 
 test("expired, revoked, and unknown tokens are indistinguishable (same message, same status)", async () => {
@@ -96,7 +99,7 @@ test("expired, revoked, and unknown tokens are indistinguishable (same message, 
 
   const results = await Promise.all(
     [expired.token, revoked.token, "not-a-real-token"].map((t) =>
-      resolveShare(t).catch((e) => ({ status: e.status, message: e.message })),
+      resolveSharePublic(t).catch((e) => ({ status: e.status, message: e.message })),
     ),
   );
   const [a, b, c] = results as any[];
@@ -107,7 +110,24 @@ test("expired, revoked, and unknown tokens are indistinguishable (same message, 
   expect(b.message).toBe(c.message);
 });
 
-test("a password-protected link needs the right password", async () => {
+test("a password-protected link needs the right password (public path: unlock, then cookie)", async () => {
+  const { owner, itemId } = await uploaded();
+  const link = await createShare(owner as any, itemId, { password: "letmein123" });
+
+  // no cookie, and a forged one, are both refused
+  await expect(resolveSharePublic(link.token)).rejects.toMatchObject({ status: 401 });
+  await expect(resolveSharePublic(link.token, "9999999999999.deadbeef")).rejects.toMatchObject({ status: 401 });
+  // a wrong password mints no cookie
+  await expect(unlockShare(link.token, "wrong-one")).rejects.toMatchObject({ status: 401 });
+
+  const { cookieValue } = await unlockShare(link.token, "letmein123");
+  expect((await resolveSharePublic(link.token, cookieValue)).item.id).toBe(itemId);
+});
+
+// The only remaining direct resolveShare test: it is the password-as-argument
+// variant, which no route uses, so its password check is pinned here rather
+// than through HTTP.
+test("resolveShare (password-as-argument variant) checks the password", async () => {
   const { owner, itemId } = await uploaded();
   const link = await createShare(owner as any, itemId, { password: "letmein123" });
   await expect(resolveShare(link.token)).rejects.toMatchObject({ status: 401 });
@@ -119,7 +139,7 @@ test("a link to a trashed item stops working", async () => {
   const { owner, itemId } = await uploaded();
   const link = await createShare(owner as any, itemId, {});
   await sql`UPDATE items SET deleted_at = now() WHERE id = ${itemId}`;
-  await expect(resolveShare(link.token)).rejects.toMatchObject({ status: 404 });
+  await expect(resolveSharePublic(link.token)).rejects.toMatchObject({ status: 404 });
 });
 
 test("a trashed item's link is byte-identical, over HTTP, to an unknown token", async () => {
@@ -134,6 +154,52 @@ test("a trashed item's link is byte-identical, over HTTP, to an unknown token", 
     expect(trashed.status).toBe(404);
     expect(await trashed.text()).toBe(await unknown.text());
   });
+});
+
+test("a pending upload cannot be shared", async () => {
+  const owner = await makeUser();
+  const space = await createSpace(owner as any, "S");
+  await createBackend({ name: "primary", config: devConfig, makeWriteTarget: true });
+  // begun but never completed: the row exists, the object may not
+  const { item_id } = await beginUpload(owner as any, space.id, null, "half.mp4", "video/mp4");
+  const [row] = await sql`SELECT status FROM items WHERE id = ${item_id}`;
+  expect(row.status).toBe("pending");
+
+  await expect(createShare(owner as any, item_id, {})).rejects.toMatchObject({ status: 400 });
+  const [{ count }] = await sql`SELECT count(*)::int AS count FROM share_links WHERE item_id = ${item_id}`;
+  expect(count).toBe(0);
+});
+
+test("a link whose item is no longer streamable answers byte-identically to an unknown token", async () => {
+  const { owner, itemId } = await uploaded();
+  const link = await createShare(owner as any, itemId, {});
+  // the item regresses out of 'ready' behind an already-issued link
+  await sql`UPDATE items SET status = 'pending' WHERE id = ${itemId}`;
+
+  await withServer(async (base) => {
+    const stale = await fetch(`${base}/s/${link.token}`);
+    const unknown = await fetch(`${base}/s/not-a-real-token`);
+    // status AND body: a 409 "this upload has not been completed" would tell an
+    // anonymous token holder the item's state.
+    expect(stale.status).toBe(unknown.status);
+    expect(stale.status).toBe(404);
+    expect(await stale.text()).toBe(await unknown.text());
+  });
+});
+
+test("a link on a trashed file can still be revoked, and restoring the file does not revive it", async () => {
+  const { owner, itemId } = await uploaded();
+  const link = await createShare(owner as any, itemId, {});
+  await deleteItem(owner as any, itemId);
+
+  // listable and revocable while trashed
+  expect((await listShares(owner as any, itemId)).map((r: any) => r.id)).toEqual([link.id]);
+  await revokeShare(owner as any, link.id);
+
+  await restoreItem(owner as any, itemId);
+  const [row] = await sql`SELECT deleted_at FROM items WHERE id = ${itemId}`;
+  expect(row.deleted_at).toBeNull(); // the file really is back
+  await expect(resolveSharePublic(link.token)).rejects.toMatchObject({ status: 404 });
 });
 
 test("any EDITOR can create a link; a VIEWER cannot", async () => {

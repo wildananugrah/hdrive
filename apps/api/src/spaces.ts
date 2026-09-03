@@ -1,15 +1,13 @@
 import { sql } from "./db.ts";
-import { HttpError } from "./http.ts";
+import { HttpError, isUuid } from "./http.ts";
 import type { User } from "./auth.ts";
 import { OWNER, VIEWER, requireItem, requireSpace } from "./perm.ts";
 
 export type Subject = { type: "user" | "group"; id: string };
 
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
 function checkSubject(s: Subject) {
   if (s?.type !== "user" && s?.type !== "group") throw new HttpError(400, "subject.type must be user or group");
-  if (!UUID_RE.test(s?.id ?? "")) throw new HttpError(400, "subject.id must be a uuid");
+  if (!isUuid(s?.id)) throw new HttpError(400, "subject.id must be a uuid");
 }
 
 function checkRole(role: number) {

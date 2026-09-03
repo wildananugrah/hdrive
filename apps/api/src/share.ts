@@ -33,6 +33,9 @@ function checkPassword(password: unknown): string | undefined {
 export async function createShare(user: User, itemId: string, opts: ShareOpts) {
   const item = await requireItem(user.id, itemId, EDITOR);
   if (item.kind !== "file") throw new HttpError(400, "only files can be shared");
+  // A pending row has no object behind it yet. Sharing it would hand out a link
+  // whose only possible answer discriminates the item's state to a stranger.
+  if (item.status !== "ready") throw new HttpError(400, "only completed uploads can be shared");
 
   const mode: ShareMode = opts.mode ?? "view";
   if (mode !== "view" && mode !== "download") throw new HttpError(400, "mode must be view or download");
@@ -54,8 +57,11 @@ export async function createShare(user: User, itemId: string, opts: ShareOpts) {
   return { ...row, token };
 }
 
+// includeDeleted: a link on a trashed file must stay listable and revocable.
+// Otherwise the only way to kill it is to restore the file first — and a restore
+// silently revives the link.
 export async function listShares(user: User, itemId: string) {
-  await requireItem(user.id, itemId, EDITOR);
+  await requireItem(user.id, itemId, EDITOR, { includeDeleted: true });
   return await sql`
     SELECT id, mode, expires_at, revoked_at, created_at,
            (password_hash IS NOT NULL) AS has_password
@@ -65,7 +71,7 @@ export async function listShares(user: User, itemId: string) {
 export async function revokeShare(user: User, linkId: string) {
   const [link] = await sql`SELECT item_id FROM share_links WHERE id = ${linkId}`;
   if (!link) throw new HttpError(404, "link not found");
-  await requireItem(user.id, link.item_id, EDITOR);
+  await requireItem(user.id, link.item_id, EDITOR, { includeDeleted: true });
   await sql`UPDATE share_links SET revoked_at = now() WHERE id = ${linkId} AND revoked_at IS NULL`;
 }
 
@@ -95,13 +101,19 @@ async function loadLink(token: string): Promise<LinkRow> {
 }
 
 /**
- * Loads the item behind a link and folds "trashed" into the SAME 404 as every
- * rejection in loadLink. Without this, a stale-token holder could tell "the
- * link is fine but the item was deleted" apart from "the link itself is dead"
- * — the exact discrimination a public token must not leak.
+ * Loads the item behind a link and folds "trashed" — and every other state that
+ * cannot be streamed — into the SAME 404 as every rejection in loadLink.
+ * Without this, a stale-token holder could tell "the link is fine but the item
+ * was deleted / never finished uploading" apart from "the link itself is dead"
+ * — the exact discrimination a public token must not leak. (streamItem's own
+ * 409 for a pending upload is precisely that leak, so the state is checked here
+ * instead of being allowed to reach it.)
  */
 async function loadLiveItem(itemId: string): Promise<Item> {
-  return await loadItem(itemId).catch(() => { throw new HttpError(404, "link not found or expired"); });
+  const dead = () => new HttpError(404, "link not found or expired");
+  const item = await loadItem(itemId).catch(() => { throw dead(); });
+  if (item.kind !== "file" || item.status !== "ready") throw dead();
+  return item;
 }
 
 /**

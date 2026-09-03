@@ -1,5 +1,5 @@
 import { sql } from "./db.ts";
-import { HttpError, type Req, sha256 } from "./http.ts";
+import { HttpError, isUuid, type Req, sha256 } from "./http.ts";
 
 const SESSION_DAYS = 30;
 
@@ -30,6 +30,33 @@ export async function register(email: string, password: string, name: string): P
     if (e?.errno === "23505") throw new HttpError(409, "email already registered");
     throw e;
   }
+}
+
+/** The admin surface over users. password_hash is never selected, so no caller
+ *  can leak it by serializing a row whole. */
+export async function listUsers() {
+  return await sql`SELECT id, email, name, is_admin, created_at FROM users ORDER BY created_at`;
+}
+
+/**
+ * Grants or removes admin. Refuses to empty the admin set: an org with zero
+ * admins has no way back in through the API at all — only a DB console or the
+ * seed script can recover it.
+ *
+ * The count runs inside the same transaction as the UPDATE, and locks every
+ * remaining admin row, so two admins demoting each other at the same time
+ * cannot both observe "someone else is still an admin".
+ */
+export async function setUserAdmin(id: string, isAdmin: boolean): Promise<User & { created_at: string }> {
+  if (!isUuid(id)) throw new HttpError(404, "user not found");
+  return await sql.begin(async (tx: any) => {
+    const [row] = await tx`UPDATE users SET is_admin = ${isAdmin} WHERE id = ${id}
+                            RETURNING id, email, name, is_admin, created_at`;
+    if (!row) throw new HttpError(404, "user not found");
+    const admins = await tx`SELECT id FROM users WHERE is_admin FOR UPDATE`;
+    if (admins.length === 0) throw new HttpError(409, "cannot remove the last admin");
+    return row;
+  });
 }
 
 export async function login(email: string, password: string) {

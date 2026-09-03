@@ -3,7 +3,7 @@ import { parseUuids, sql, uuids } from "../src/db.ts";
 import { EDITOR, VIEWER, requireItem } from "../src/perm.ts";
 import { createFolder, listChildren, moveItem, renameItem } from "../src/items.ts";
 import { addSpaceMember, createSpace } from "../src/spaces.ts";
-import { makeUser, resetDb } from "./helpers.ts";
+import { makeUser, resetDb, withServer } from "./helpers.ts";
 
 beforeEach(resetDb);
 
@@ -219,6 +219,82 @@ test("moving into a non-folder target is rejected", async () => {
   await sql`INSERT INTO items (id, space_id, parent_id, kind, name, path_ids, created_by, status)
             VALUES (${fileId}, ${spaceId}, NULL, 'file', 'f.txt', ${uuids([fileId])}::uuid[], ${owner.id}, 'ready')`;
   await expect(moveItem(owner as any, a.id, fileId)).rejects.toMatchObject({ status: 400 });
+});
+
+/** Walks parent_id to the root. Throws on the second visit to any id, so a
+ *  cycle cannot spin forever — and cannot pass. */
+async function assertReachesRoot(id: string) {
+  const seen = new Set<string>();
+  let cur: string | null = id;
+  while (cur) {
+    expect(seen.has(cur)).toBe(false);
+    seen.add(cur);
+    const [row] = await sql`SELECT parent_id FROM items WHERE id = ${cur}`;
+    cur = row.parent_id as string | null;
+  }
+}
+
+test("concurrent moves that would form a cycle never leave one", async () => {
+  const { owner, spaceId } = await setup();
+  // Several rounds: the race is a window, not a certainty. Without the
+  // space-scoped advisory lock both moves validate against a pre-move tree and
+  // commit A->B and B->A, hiding both subtrees permanently.
+  for (let round = 0; round < 8; round++) {
+    const a = await createFolder(owner as any, spaceId, null, `a${round}`);
+    const b = await createFolder(owner as any, spaceId, null, `b${round}`);
+
+    const results = await Promise.allSettled([
+      moveItem(owner as any, a.id, b.id),
+      moveItem(owner as any, b.id, a.id),
+    ]);
+    expect(results.filter((r) => r.status === "fulfilled").length).toBeLessThanOrEqual(1);
+
+    for (const id of [a.id, b.id]) {
+      await assertReachesRoot(id);
+      await assertPathInvariant(id);
+    }
+  }
+});
+
+test("PATCH applies rename and move together: a failing move rolls the rename back", async () => {
+  const { owner, spaceId } = await setup();
+  const d = await createFolder(owner as any, spaceId, null, "d");
+  await createFolder(owner as any, spaceId, d.id, "taken"); // sibling that will collide
+  const b = await createFolder(owner as any, spaceId, null, "b");
+
+  await withServer(async (base) => {
+    // "taken" is free at the root, so the rename half succeeds on its own; the
+    // move half then collides under d. Both must be undone.
+    const res = await fetch(`${base}/api/items/${b.id}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json", authorization: `Bearer ${owner.token}` },
+      body: JSON.stringify({ name: "taken", parent_id: d.id }),
+    });
+    expect(res.status).toBe(409);
+  });
+
+  const [row] = await sql`SELECT name, parent_id FROM items WHERE id = ${b.id}`;
+  expect(row.name).toBe("b");
+  expect(row.parent_id).toBeNull();
+});
+
+test("PATCH applies both halves when they succeed", async () => {
+  const { owner, spaceId } = await setup();
+  const d = await createFolder(owner as any, spaceId, null, "d");
+  const b = await createFolder(owner as any, spaceId, null, "b");
+
+  await withServer(async (base) => {
+    const res = await fetch(`${base}/api/items/${b.id}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json", authorization: `Bearer ${owner.token}` },
+      body: JSON.stringify({ name: "bee", parent_id: d.id }),
+    });
+    expect(res.status).toBe(200);
+    const out = await res.json();
+    expect(out.name).toBe("bee");
+    expect(out.parent_id).toBe(d.id);
+  });
+  await assertPathInvariant(b.id);
 });
 
 test("moving into a folder with a name collision is rejected", async () => {

@@ -1,7 +1,8 @@
 import { beforeEach, expect, test } from "bun:test";
 import { login, register, requireUser } from "../src/auth.ts";
 import { HttpError, type Req } from "../src/http.ts";
-import { resetDb, withServer } from "./helpers.ts";
+import { sql } from "../src/db.ts";
+import { makeUser, resetDb, withServer } from "./helpers.ts";
 
 // Request.headers is a getter-only accessor in Bun 1.3.14, so it must be set
 // via the constructor's init, not reassigned after the fact with Object.assign.
@@ -83,9 +84,11 @@ test("requireUser rejects an expired session", async () => {
 
 test("auth endpoints work over HTTP", async () => {
   await withServer(async (base) => {
+    // registration is admin-only now, so this leg carries an admin's token
+    const admin = await makeUser({ admin: true });
     const reg = await fetch(`${base}/api/auth/register`, {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: { "content-type": "application/json", authorization: `Bearer ${admin.token}` },
       body: JSON.stringify({ email: "http@b.com", password: "hunter2hunter2", name: "H" }),
     });
     expect(reg.status).toBe(201);
@@ -110,15 +113,104 @@ test("auth endpoints work over HTTP", async () => {
 
 test("malformed bodies return 400, not 500", async () => {
   await withServer(async (base) => {
+    const admin = await makeUser({ admin: true });
     for (const path of ["/api/auth/register", "/api/auth/login"]) {
       for (const badBody of [{}, { email: 123 }]) {
         const res = await fetch(`${base}${path}`, {
           method: "POST",
-          headers: { "content-type": "application/json" },
+          headers: { "content-type": "application/json", authorization: `Bearer ${admin.token}` },
           body: JSON.stringify(badBody),
         });
         expect(res.status).toBe(400);
       }
     }
+  });
+});
+
+test("POST /api/auth/register is admin-only: 401 anonymous, 403 for a normal user, 201 for an admin", async () => {
+  await withServer(async (base) => {
+    const post = (auth?: string, email = `x${Math.random()}@b.com`) =>
+      fetch(`${base}/api/auth/register`, {
+        method: "POST",
+        headers: { "content-type": "application/json", ...(auth ? { authorization: `Bearer ${auth}` } : {}) },
+        body: JSON.stringify({ email, password: "hunter2hunter2", name: "N" }),
+      });
+
+    const anon = await post();
+    expect(anon.status).toBe(401);
+
+    const plain = await makeUser();
+    expect((await post(plain.token)).status).toBe(403);
+
+    const admin = await makeUser({ admin: true });
+    expect((await post(admin.token)).status).toBe(201);
+
+    // and the refused ones really did not create anything
+    const [{ count }] = await sql`SELECT count(*)::int AS count FROM users`;
+    expect(count).toBe(3); // plain + admin + the one the admin created
+  });
+});
+
+test("GET /api/admin/users lists users without password_hash, and refuses a non-admin", async () => {
+  await withServer(async (base) => {
+    const admin = await makeUser({ admin: true });
+    const plain = await makeUser();
+
+    const forbidden = await fetch(`${base}/api/admin/users`, {
+      headers: { authorization: `Bearer ${plain.token}` },
+    });
+    expect(forbidden.status).toBe(403);
+
+    const res = await fetch(`${base}/api/admin/users`, {
+      headers: { authorization: `Bearer ${admin.token}` },
+    });
+    expect(res.status).toBe(200);
+    const body = await res.text();
+    const rows = JSON.parse(body);
+    expect(rows.map((r: any) => r.id).sort()).toEqual([admin.id, plain.id].sort());
+    expect(Object.keys(rows[0]).sort()).toEqual(["created_at", "email", "id", "is_admin", "name"]);
+    expect(body).not.toContain("password_hash");
+    expect(body).not.toContain("$argon2");
+  });
+});
+
+test("PATCH /api/admin/users/:id promotes and demotes, refuses non-admins, and refuses emptying the admin set", async () => {
+  await withServer(async (base) => {
+    const admin = await makeUser({ admin: true });
+    const plain = await makeUser();
+    const patch = (token: string, id: string, is_admin: boolean) =>
+      fetch(`${base}/api/admin/users/${id}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+        body: JSON.stringify({ is_admin }),
+      });
+
+    expect((await patch(plain.token, plain.id, true)).status).toBe(403);
+    expect((await sql`SELECT is_admin FROM users WHERE id = ${plain.id}`)[0].is_admin).toBe(false);
+
+    const promoted = await patch(admin.token, plain.id, true);
+    expect(promoted.status).toBe(200);
+    expect((await promoted.json()).is_admin).toBe(true);
+
+    const demoted = await patch(admin.token, plain.id, false);
+    expect(demoted.status).toBe(200);
+    expect((await demoted.json()).is_admin).toBe(false);
+
+    // now `admin` is the only admin left: demoting them is refused, and sticks
+    const last = await patch(admin.token, admin.id, false);
+    expect(last.status).toBe(409);
+    expect((await sql`SELECT is_admin FROM users WHERE id = ${admin.id}`)[0].is_admin).toBe(true);
+
+    // a non-boolean is a 400, not a 500
+    const bad = await fetch(`${base}/api/admin/users/${plain.id}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json", authorization: `Bearer ${admin.token}` },
+      body: JSON.stringify({ is_admin: "yes" }),
+    });
+    expect(bad.status).toBe(400);
+
+    // an unknown (and a non-uuid) id is a 404, not a 500
+    expect((await patch(admin.token, crypto.randomUUID(), true)).status).toBe(404);
+    expect((await patch(admin.token, "not-a-uuid", true)).status).toBe(404);
   });
 });

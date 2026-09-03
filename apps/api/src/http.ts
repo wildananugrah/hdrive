@@ -40,3 +40,13 @@ export function str(value: unknown, field: string): string {
   if (typeof value !== "string") throw new HttpError(400, `${field} must be a string`);
   return value;
 }
+
+export function bool(value: unknown, field: string): boolean {
+  if (typeof value !== "boolean") throw new HttpError(400, `${field} must be a boolean`);
+  return value;
+}
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+/** A non-uuid reaching a uuid column is a Postgres 22P02, i.e. a 500 for what is
+ *  really a bad request. Check before the query, not after. */
+export const isUuid = (v: unknown): v is string => typeof v === "string" && UUID_RE.test(v);

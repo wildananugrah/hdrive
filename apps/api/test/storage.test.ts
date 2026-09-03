@@ -172,7 +172,51 @@ test("deleteBackend refuses while an item points here, and succeeds once none do
 
   await sql`DELETE FROM items WHERE id = ${itemId}`;
   await deleteBackend(backend.id); // now succeeds
-  expect(await sql`SELECT id FROM storage_backends WHERE id = ${backend.id}`).toEqual([]);
+  const left: unknown[] = await sql`SELECT id FROM storage_backends WHERE id = ${backend.id}`;
+  expect(left).toEqual([]);
+});
+
+test("updateBackend is all-or-nothing: a bad config leaves the name alone", async () => {
+  const created = await createBackend({ name: "original", config: devConfig });
+  await expect(
+    updateBackend(created.id, { name: "renamed", config: { ...devConfig, bucket: "" } }),
+  ).rejects.toMatchObject({ status: 400 });
+  const [row] = await sql`SELECT name FROM storage_backends WHERE id = ${created.id}`;
+  expect(row.name).toBe("original");
+});
+
+test("updateBackend 404s on an unknown id without writing anything", async () => {
+  await expect(updateBackend(crypto.randomUUID(), { name: "ghost" })).rejects.toMatchObject({ status: 404 });
+});
+
+test("deleteBackend racing an item that points here answers 409, never an unhandled FK error", async () => {
+  const backend = await createBackend({ name: "raced", config: devConfig });
+  const user = await makeUser();
+  const space = await createSpace(user as any, "S");
+  const itemId = crypto.randomUUID();
+
+  // An open transaction that has inserted an item pointing at this backend:
+  // invisible to a count taken outside it, but its FK row lock is real. This is
+  // the exact interleaving a concurrent beginUpload produces.
+  let release!: () => void;
+  const gate = new Promise<void>((r) => { release = r; });
+  const holder = sql.begin(async (tx: any) => {
+    await tx`
+      INSERT INTO items (id, space_id, parent_id, kind, name, path_ids, storage_backend_id, storage_key, created_by, status)
+      VALUES (${itemId}, ${space.id}, NULL, 'file', 'f.txt', ${uuids([itemId])}::uuid[], ${backend.id}, 'k', ${user.id}, 'pending')`;
+    await gate;
+  });
+
+  await Bun.sleep(100);
+  const del = deleteBackend(backend.id).then(() => "deleted" as const).catch((e) => e);
+  await Bun.sleep(100);
+  release();
+  await holder;
+
+  // 409, not a bare Postgres 23503 surfacing as a 500
+  expect(await del).toMatchObject({ status: 409 });
+  const [still] = await sql`SELECT id FROM storage_backends WHERE id = ${backend.id}`;
+  expect(still?.id).toBe(backend.id);
 });
 
 test("deleteBackend on an unknown id returns 404, not a silent success", async () => {

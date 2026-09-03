@@ -1,10 +1,12 @@
 import { parseUuids, sql, uuids } from "./db.ts";
 import { HttpError } from "./http.ts";
 import type { User } from "./auth.ts";
-import { EDITOR, VIEWER, type Item, requireItem, requireSpace } from "./perm.ts";
+import { EDITOR, VIEWER, type Item, loadItem, requireItem, requireSpace } from "./perm.ts";
 
 /** Names are user-visible and become Content-Disposition filenames. Keep them boring. */
-export function checkName(name: string): string {
+export function checkName(name: unknown): string {
+  if (name !== undefined && name !== null && typeof name !== "string")
+    throw new HttpError(400, "name must be a string");
   const n = (name ?? "").trim();
   if (!n) throw new HttpError(400, "name is required");
   if (n.length > 255) throw new HttpError(400, "name must be 255 characters or fewer");
@@ -75,21 +77,17 @@ export async function listChildren(user: User, spaceId: string, parentId: string
   })) as Item[];
 }
 
-export async function renameItem(user: User, itemId: string, name: string) {
-  const n = checkName(name);
-  await requireItem(user.id, itemId, EDITOR);
-  try {
-    const [row] = await sql`UPDATE items SET name = ${n} WHERE id = ${itemId} RETURNING *`;
-    return { ...row, path_ids: parseUuids(row.path_ids) } as Item;
-  } catch (e) { asConflict(e); }
-}
-
 /**
- * Moves an item and rewrites path_ids for its entire subtree.
+ * Renames and/or moves an item, in ONE transaction.
  *
- * This is the ONLY place path_ids is mutated. The rewrite replaces the first
- * `depth` elements (the old ancestor chain plus the item itself) with the new
- * ancestor chain, keeping each descendant's own tail intact:
+ * Both halves are applied together because the route exposes them as a single
+ * PATCH: a rename that commits before a failing move would leave the caller
+ * with half of what they asked for and no way to tell.
+ *
+ * The move rewrites path_ids for the entire subtree. This is the ONLY place
+ * path_ids is mutated. The rewrite replaces the first `depth` elements (the old
+ * ancestor chain plus the item itself) with the new ancestor chain, keeping
+ * each descendant's own tail intact:
  *
  *   new = newAncestors || old[depth:]
  *
@@ -97,25 +95,53 @@ export async function renameItem(user: User, itemId: string, name: string) {
  * [item, ...rest]. Postgres arrays are 1-indexed, so old[depth:] starts at the
  * item's own position.
  */
-export async function moveItem(user: User, itemId: string, newParentId: string | null) {
-  const item = await requireItem(user.id, itemId, EDITOR);
+export async function patchItem(
+  user: User, itemId: string, patch: { name?: string; parent_id?: string | null },
+): Promise<Item> {
+  const name = patch.name === undefined ? null : checkName(patch.name);
+  const moving = patch.parent_id !== undefined;
+  const newParentId = patch.parent_id ?? null;
 
-  let newAncestors: string[];
-  if (newParentId) {
-    if (newParentId === itemId) throw new HttpError(400, "cannot move an item into itself");
-    const parent = await requireItem(user.id, newParentId, EDITOR);
-    if (parent.kind !== "folder") throw new HttpError(400, "target is not a folder");
-    if (parent.space_id !== item.space_id) throw new HttpError(400, "cross-space moves are not supported");
-    // If the target's own path contains this item, the target is a descendant.
-    if (parent.path_ids.includes(itemId)) throw new HttpError(400, "cannot move a folder into its own descendant");
-    newAncestors = parent.path_ids;
-  } else {
-    await requireSpace(user.id, item.space_id, EDITOR);
-    newAncestors = [];
+  const item = await requireItem(user.id, itemId, EDITOR);
+  if (moving) {
+    if (newParentId) {
+      if (newParentId === itemId) throw new HttpError(400, "cannot move an item into itself");
+      const parent = await requireItem(user.id, newParentId, EDITOR);
+      if (parent.kind !== "folder") throw new HttpError(400, "target is not a folder");
+      if (parent.space_id !== item.space_id) throw new HttpError(400, "cross-space moves are not supported");
+    } else {
+      await requireSpace(user.id, item.space_id, EDITOR);
+    }
   }
 
   try {
     await sql.begin(async (tx: any) => {
+      if (name !== null) await tx`UPDATE items SET name = ${name} WHERE id = ${itemId}`;
+      if (!moving) return;
+
+      // Space-scoped advisory lock, taken BEFORE reading anything the cycle
+      // guard is evaluated against. Without it two concurrent moves in the same
+      // space each validate against a pre-move tree: moveItem(A,B) and
+      // moveItem(B,A) both pass and commit, leaving A.parent=B and B.parent=A —
+      // a cycle that hides both subtrees from every listing and that the guard
+      // itself then refuses to undo. Held to commit; nothing else in the space
+      // can move while we read and write.
+      await tx`SELECT pg_advisory_xact_lock(hashtext(${item.space_id}))`;
+
+      let newAncestors: string[] = [];
+      if (newParentId) {
+        // Re-read under the lock: the target's ancestry as validated above may
+        // already be stale, and the guard must run on state that cannot change
+        // before the write below.
+        const [target] = await tx`SELECT path_ids FROM items
+                                   WHERE id = ${newParentId} AND deleted_at IS NULL`;
+        if (!target) throw new HttpError(404, "not found");
+        newAncestors = parseUuids(target.path_ids);
+        // If the target's own path contains this item, the target is a descendant.
+        if (newAncestors.includes(itemId))
+          throw new HttpError(400, "cannot move a folder into its own descendant");
+      }
+
       // depth MUST come from a read taken inside this transaction, under a row
       // lock. The `item` fetched above (outside the transaction) can be stale
       // by the time we get here: if another moveItem on the same item commits
@@ -131,4 +157,14 @@ export async function moveItem(user: User, itemId: string, newParentId: string |
                 WHERE path_ids @> ARRAY[${itemId}]::uuid[]`;
     });
   } catch (e) { asConflict(e); }
+
+  return await loadItem(itemId);
+}
+
+export async function renameItem(user: User, itemId: string, name: string): Promise<Item> {
+  return await patchItem(user, itemId, { name });
+}
+
+export async function moveItem(user: User, itemId: string, newParentId: string | null): Promise<void> {
+  await patchItem(user, itemId, { parent_id: newParentId });
 }

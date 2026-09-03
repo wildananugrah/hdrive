@@ -5,7 +5,6 @@ export const VIEWER = 1;
 export const EDITOR = 2;
 export const OWNER = 3;
 
-export const ROLE_NAMES: Record<number, string> = { 1: "viewer", 2: "editor", 3: "owner" };
 export const ROLE_VALUES: Record<string, number> = { viewer: 1, editor: 2, owner: 3 };
 
 export function parseRole(name: string): number {

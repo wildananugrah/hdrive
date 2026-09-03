@@ -57,33 +57,56 @@ export async function listBackends() {
       FROM storage_backends b ORDER BY b.created_at`;
 }
 
+/**
+ * One transaction, existence checked before anything is written: a patch naming
+ * both fields must not land the name and then fail on the config, and a patch
+ * for an unknown id must not "succeed" at updating zero rows before 404ing.
+ */
 export async function updateBackend(id: string, patch: { name?: string; config?: Partial<S3Config> }) {
-  if (patch.name !== undefined) {
-    if (!patch.name.trim()) throw new HttpError(400, "name is required");
-    await sql`UPDATE storage_backends SET name = ${patch.name.trim()} WHERE id = ${id}`;
-  }
-  if (patch.config !== undefined) {
-    const cfg = checkConfig(patch.config);
-    await sql`UPDATE storage_backends
-                 SET config = pgp_sym_encrypt(${JSON.stringify(cfg)}, ${KEY})
-               WHERE id = ${id}`;
-  }
+  const name = patch.name === undefined ? undefined : patch.name.trim();
+  if (name !== undefined && !name) throw new HttpError(400, "name is required");
+  const cfg = patch.config === undefined ? undefined : checkConfig(patch.config);
+
+  const row = await sql.begin(async (tx: any) => {
+    const [found] = await tx`SELECT 1 FROM storage_backends WHERE id = ${id} FOR UPDATE`;
+    if (!found) throw new HttpError(404, "backend not found");
+    if (name !== undefined) await tx`UPDATE storage_backends SET name = ${name} WHERE id = ${id}`;
+    if (cfg !== undefined) {
+      await tx`UPDATE storage_backends
+                  SET config = pgp_sym_encrypt(${JSON.stringify(cfg)}, ${KEY})
+                WHERE id = ${id}`;
+    }
+    const [out] = await tx`SELECT id, name, provider, is_write_target, created_at
+                             FROM storage_backends WHERE id = ${id}`;
+    return out;
+  });
   invalidateBackendCache(id);
-  const [row] = await sql`SELECT id, name, provider, is_write_target, created_at
-                            FROM storage_backends WHERE id = ${id}`;
-  if (!row) throw new HttpError(404, "backend not found");
   return row;
 }
 
 /**
  * Refuses while any item still points here. Deleting a backend that owns bytes
  * would orphan files that users can still see in their tree.
+ *
+ * The count and the DELETE run in one transaction, and the row is locked first,
+ * so a beginUpload landing between them cannot slip an item in. The FK is the
+ * backstop for anything that still gets through: 23503 is the same refusal, not
+ * an unhandled 500.
  */
 export async function deleteBackend(id: string) {
-  const [{ count }] = await sql`SELECT count(*)::int AS count FROM items WHERE storage_backend_id = ${id}`;
-  if (count > 0) throw new HttpError(409, `${count} file(s) still stored here; cannot delete this backend`);
-  const [row] = await sql`DELETE FROM storage_backends WHERE id = ${id} RETURNING id`;
-  if (!row) throw new HttpError(404, "backend not found");
+  await sql.begin(async (tx: any) => {
+    const [found] = await tx`SELECT 1 FROM storage_backends WHERE id = ${id} FOR UPDATE`;
+    if (!found) throw new HttpError(404, "backend not found");
+    const [{ count }] = await tx`SELECT count(*)::int AS count FROM items WHERE storage_backend_id = ${id}`;
+    if (count > 0) throw new HttpError(409, `${count} file(s) still stored here; cannot delete this backend`);
+    try {
+      await tx`DELETE FROM storage_backends WHERE id = ${id}`;
+    } catch (e: any) {
+      if (e?.errno === "23503")
+        throw new HttpError(409, "file(s) still stored here; cannot delete this backend");
+      throw e;
+    }
+  });
   invalidateBackendCache(id);
 }
 

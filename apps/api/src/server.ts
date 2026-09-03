@@ -1,9 +1,10 @@
-import { body, json, route, str, type Req } from "./http.ts";
+import { body, bool, json, route, str, type Req } from "./http.ts";
 import {
-  clearCookie, login, logout, register, requireAdmin, requireUser, sessionCookie, tokenFrom,
+  clearCookie, listUsers, login, logout, register, requireAdmin, requireUser,
+  sessionCookie, setUserAdmin, tokenFrom,
 } from "./auth.ts";
 import { parseRole } from "./perm.ts";
-import { createFolder, getItem, listChildren, moveItem, renameItem } from "./items.ts";
+import { createFolder, getItem, listChildren, patchItem } from "./items.ts";
 import { deleteItem, listTrash, restoreItem } from "./trash.ts";
 import {
   createBackend, deleteBackend, listBackends, probeBackend, setWriteTarget, updateBackend,
@@ -23,8 +24,13 @@ import {
 export const routes = {
   "/api/health": { GET: route(async () => json({ ok: true })) },
 
+  // Admin-only: an open registration lets a stranger create an account, then a
+  // space they own, then upload into the org's shared write-target bucket.
+  // register() itself stays unguarded so scripts/seed-admin.ts can bootstrap
+  // the very first admin, when no admin exists to authorize the call.
   "/api/auth/register": {
     POST: route(async (req) => {
+      await requireAdmin(req);
       const b = await body<Record<string, unknown>>(req);
       const email = str(b.email, "email");
       const password = str(b.password, "password");
@@ -124,9 +130,11 @@ export const routes = {
     PATCH: route(async (req) => {
       const u = await requireUser(req);
       const b = await body<{ name?: string; parent_id?: string | null }>(req);
-      if (b.name !== undefined) await renameItem(u, req.params.id, b.name);
-      if (b.parent_id !== undefined) await moveItem(u, req.params.id, b.parent_id);
-      return json(await getItem(u, req.params.id));
+      // One transaction: a rename must not commit when the move alongside it fails.
+      return json(await patchItem(u, req.params.id, {
+        ...(b.name !== undefined ? { name: b.name } : {}),
+        ...(b.parent_id !== undefined ? { parent_id: b.parent_id } : {}),
+      }));
     }),
     DELETE: route(async (req) => {
       await deleteItem(await requireUser(req), req.params.id);
@@ -178,6 +186,18 @@ export const routes = {
       const u = await requireUser(req);
       const inline = new URL(req.url).searchParams.get("inline") === "1";
       return serveContent(u, req.params.id, req.headers.get("range"), inline ? "inline" : "attachment");
+    }),
+  },
+
+  "/api/admin/users": {
+    GET: route(async (req) => { await requireAdmin(req); return json(await listUsers()); }),
+  },
+
+  "/api/admin/users/:id": {
+    PATCH: route(async (req) => {
+      await requireAdmin(req);
+      const b = await body<Record<string, unknown>>(req);
+      return json(await setUserAdmin(req.params.id, bool(b.is_admin, "is_admin")));
     }),
   },
 
