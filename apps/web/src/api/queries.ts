@@ -2,10 +2,12 @@
 // Keep each task's hooks together with a comment banner; never rewrite
 // another task's section wholesale.
 
+import { useCallback, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "./client";
 import { isUnauthorized } from "./errors";
 import type { Item, Space, User } from "./types";
+import { uploadFile, type UploadPhase } from "./upload";
 
 // ---- Auth (Task 4) ---------------------------------------------------
 
@@ -60,4 +62,57 @@ export function useChildren(spaceId: string, parentId: string | null) {
       ),
     enabled: Boolean(spaceId),
   });
+}
+
+// ---- Uploads (Task 7) ---------------------------------------------------
+
+export type UploadState = {
+  id: string; name: string; phase: UploadPhase; progress: number;
+  itemId?: string; error?: string;
+};
+
+export function useUploads(spaceId: string, parentId: string | null) {
+  const qc = useQueryClient();
+  const [uploads, setUploads] = useState<UploadState[]>([]);
+  const files = useRef(new Map<string, File>());
+
+  const patch = (id: string, next: Partial<UploadState>) =>
+    setUploads((u) => u.map((x) => (x.id === id ? { ...x, ...next } : x)));
+
+  const run = useCallback(async (id: string, file: File) => {
+    try {
+      const item = await uploadFile({
+        spaceId, parentId, file,
+        onPhase: (phase) => patch(id, { phase }),
+        onProgress: (progress) => patch(id, { progress }),
+      });
+      patch(id, { itemId: item.id, error: undefined });
+      qc.invalidateQueries({ queryKey: ["children", spaceId, parentId] });
+    } catch (e) {
+      patch(id, { phase: "failed", error: e instanceof Error ? e.message : "upload failed" });
+    }
+  }, [spaceId, parentId, qc]);
+
+  const start = useCallback((incoming: FileList | File[]) => {
+    for (const file of Array.from(incoming)) {
+      const id = crypto.randomUUID();
+      files.current.set(id, file);
+      setUploads((u) => [...u, { id, name: file.name, phase: "reserving", progress: 0 }]);
+      void run(id, file);
+    }
+  }, [run]);
+
+  const retry = useCallback((id: string) => {
+    const file = files.current.get(id);
+    if (!file) return;
+    patch(id, { phase: "reserving", progress: 0, error: undefined });
+    void run(id, file);
+  }, [run]);
+
+  const dismiss = useCallback((id: string) => {
+    files.current.delete(id);
+    setUploads((u) => u.filter((x) => x.id !== id));
+  }, []);
+
+  return { uploads, start, retry, dismiss };
 }
