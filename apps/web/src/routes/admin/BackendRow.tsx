@@ -25,15 +25,30 @@ export default function BackendRow({ backend }: { backend: Backend }) {
       {backend.is_write_target ? (
         <span className="pill">Write target</span>
       ) : (
-        <button type="button" onClick={() => setWriteTarget.mutate(backend.id)} disabled={setWriteTarget.isPending}>
-          Make write target
-        </button>
+        <div>
+          <button type="button" onClick={() => setWriteTarget.mutate(backend.id)} disabled={setWriteTarget.isPending}>
+            Make write target
+          </button>
+          {/* A rejected mutation (network error, 500) must not just revert
+              the button silently — that's indistinguishable from never
+              having clicked it. */}
+          {setWriteTarget.isError && (
+            <p role="alert" className="field-error">{(setWriteTarget.error as Error).message}</p>
+          )}
+        </div>
       )}
 
       <div className="backend-probe">
         <button type="button" onClick={() => probe.mutate(backend.id)} disabled={probe.isPending}>
           {probe.isPending ? "Testing…" : "Test connection"}
         </button>
+        {/* A thrown error (could not run the probe at all) is rendered
+            distinctly from a returned {ok:false} (the probe ran and the
+            backend is broken) — the two mean different things to an admin
+            diagnosing a misconfigured provider. */}
+        {probe.isError && (
+          <p role="alert" className="field-error">Could not run the probe: {(probe.error as Error).message}</p>
+        )}
         {/* Every step, tick or cross, and the failing step's detail — a probe
             that only reports ok/fail can't diagnose a misconfigured
             provider, which is the entire point of running it at setup time. */}

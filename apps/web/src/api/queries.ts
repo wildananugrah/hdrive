@@ -288,7 +288,13 @@ export function useSetAdmin() {
   return useMutation({
     mutationFn: (v: { id: string; is_admin: boolean }) =>
       api.patch<User>(`/api/admin/users/${v.id}`, { is_admin: v.is_admin }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["adminUsers"] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["adminUsers"] });
+      // Demoting yourself (other admins remain, so no 409) must not leave
+      // the sidebar and every admin route's guard still showing admin —
+      // ["me"] is what they all read, and only this call knows it just changed.
+      qc.invalidateQueries({ queryKey: ["me"] });
+    },
   });
 }
 

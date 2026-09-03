@@ -7,6 +7,7 @@ import { formatBytes, formatDate } from "../lib/format";
 import { visibilityFromFlags } from "../lib/visibility";
 import EmptyState from "./EmptyState";
 import MoveModal from "./MoveModal";
+import PermissionsModal from "./PermissionsModal";
 import RenameCell from "./RenameCell";
 import RowMenu from "./RowMenu";
 import ShareModal from "./ShareModal";
@@ -24,6 +25,7 @@ export default function FileTable(
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [movingItem, setMovingItem] = useState<Item | null>(null);
   const [sharingItem, setSharingItem] = useState<Item | null>(null);
+  const [managingItem, setManagingItem] = useState<Item | null>(null);
 
   const rename = useRenameItem(spaceId, parentId);
   const move = useMoveItem(spaceId, parentId);
@@ -95,6 +97,7 @@ export default function FileTable(
                   onRename={() => startRename(it.id)}
                   onMove={() => { move.reset(); setMovingItem(it); }}
                   onShare={() => setSharingItem(it)}
+                  onManageAccess={() => setManagingItem(it)}
                   onDelete={() => del.mutate(it.id)}
                 />
               </td>
@@ -121,6 +124,7 @@ export default function FileTable(
         />
       )}
       {sharingItem && <ShareModal item={sharingItem} onClose={() => setSharingItem(null)} />}
+      {managingItem && <PermissionsModal item={managingItem} onClose={() => setManagingItem(null)} />}
     </>
   );
 }

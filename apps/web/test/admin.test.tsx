@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, expect, test, vi } from "vitest";
@@ -80,6 +80,25 @@ test("the probe shows every step, including which one failed and its detail", as
   expect(screen.getByText(/object not found after a successful PUT/i)).toBeInTheDocument();
 });
 
+// ---- A rejected mutation must not fail silently -----------------------------
+// (review finding: probe/setWriteTarget had no isError branch — a thrown
+// error looked identical to never having clicked the button.)
+
+test("a probe that rejects (network error, 500, bad JSON) shows an error, distinct from a returned {ok:false}", async () => {
+  vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new TypeError("network error")));
+  wrap(<BackendRow backend={backend()} />);
+  await userEvent.click(screen.getByRole("button", { name: /test connection/i }));
+  const alert = await screen.findByRole("alert");
+  expect(alert).toHaveTextContent(/could not run the probe/i);
+});
+
+test("a setWriteTarget that rejects shows an error instead of silently reverting", async () => {
+  vi.stubGlobal("fetch", vi.fn().mockResolvedValue(res(500, { error: "internal error" })));
+  wrap(<BackendRow backend={backend({ is_write_target: false })} />);
+  await userEvent.click(screen.getByRole("button", { name: /make write target/i }));
+  expect(await screen.findByRole("alert")).toBeInTheDocument();
+});
+
 // ---- Backends list: state-branch requirement -------------------------------
 
 test("a server error loading backends shows a retry affordance, never an empty list", async () => {
@@ -97,6 +116,41 @@ test("a non-admin forcing the URL sees Forbidden, not a broken screen or the lis
   ));
   wrap(<Backends />);
   expect(await screen.findByText(/forbidden/i)).toBeInTheDocument();
+});
+
+// ---- Credentials never reach the DOM (mirrors share.test.tsx's token guard) -
+
+const fillBackendForm = async (secret: string) => {
+  await userEvent.click(await screen.findByRole("button", { name: /^add backend$/i }));
+  await userEvent.type(screen.getByLabelText(/^name$/i), "New backend");
+  await userEvent.type(screen.getByLabelText(/endpoint/i), "https://s3.example.com");
+  await userEvent.type(screen.getByLabelText(/bucket/i), "my-bucket");
+  await userEvent.type(screen.getByLabelText(/access key id/i), "AKIAEXAMPLE");
+  await userEvent.type(screen.getByLabelText(/secret access key/i), secret);
+  await userEvent.click(screen.getByRole("button", { name: /^add backend$/i }));
+};
+
+test("a submitted secret never appears in the DOM after a successful create", async () => {
+  const secret = "s3cr3t-VALUE-98213";
+  vi.stubGlobal("fetch", withMe((_url, init) =>
+    Promise.resolve(init?.method === "POST" ? res(201, backend({ id: "b9" })) : res(200, [])),
+  ));
+  wrap(<Backends />);
+  await fillBackendForm(secret);
+  // Success clears and closes the form.
+  await waitFor(() => expect(screen.queryByLabelText(/secret access key/i)).toBeNull());
+  expect(document.body.textContent).not.toContain(secret);
+});
+
+test("a submitted secret never appears in the DOM after a failed create (the likelier leak path)", async () => {
+  const secret = "s3cr3t-VALUE-77104";
+  vi.stubGlobal("fetch", withMe((_url, init) =>
+    Promise.resolve(init?.method === "POST" ? res(400, { error: "config.endpoint must be an http(s) URL" }) : res(200, [])),
+  ));
+  wrap(<Backends />);
+  await fillBackendForm(secret);
+  await screen.findByRole("alert");
+  expect(document.body.textContent).not.toContain(secret);
 });
 
 // ---- Users: the actionable last-admin 409 ----------------------------------
@@ -133,6 +187,19 @@ test("promoting a member succeeds and the row reflects the new state", async () 
   wrap(<Users />);
   await userEvent.click(await screen.findByRole("button", { name: /promote/i }));
   await screen.findByRole("button", { name: /demote/i });
+});
+
+test("a successful demote invalidates [\"me\"], not just the admin list — so the sidebar/guards don't keep showing admin", async () => {
+  const client = newClient();
+  const invalidateSpy = vi.spyOn(client, "invalidateQueries");
+  const fetchMock = withMe((_url, init) => {
+    if (init?.method === "PATCH") return Promise.resolve(res(200, { ...user(), is_admin: false }));
+    return Promise.resolve(res(200, [user()]));
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  wrap(<Users />, client);
+  await userEvent.click(await screen.findByRole("button", { name: /demote/i }));
+  await waitFor(() => expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ["me"] }));
 });
 
 test("a server error loading users shows a retry affordance, never an empty list", async () => {

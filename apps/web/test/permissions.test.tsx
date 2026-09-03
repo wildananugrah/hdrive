@@ -1,7 +1,9 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { MemoryRouter } from "react-router-dom";
 import { afterEach, expect, test, vi } from "vitest";
+import FileTable from "../src/components/FileTable";
 import PermissionsModal from "../src/components/PermissionsModal";
 import type { Grant, Group, Item, SpaceMember } from "../src/api/types";
 
@@ -109,6 +111,26 @@ test("a non-admin owner sees an actionable message, not a generic retry, when th
   wrap(<PermissionsModal item={item()} onClose={() => {}} />);
   await userEvent.click(screen.getByRole("tab", { name: /groups/i }));
   expect(await screen.findByText(/only administrators can grant access to groups/i)).toBeInTheDocument();
+});
+
+// ---- FileTable wiring: without this, PermissionsModal (and the Groups tab
+// it exists for) is dead code — nothing else opens it. -----------------------
+
+test("the row menu offers Manage access, opening PermissionsModal with both tabs for that row's item", async () => {
+  vi.stubGlobal("fetch", routeFetch({ grants: [grant()], members: [member()], groups: [group()] }));
+  render(
+    <QueryClientProvider client={newClient()}>
+      <MemoryRouter>
+        <FileTable items={[item()]} spaceId="s1" spaceName="Studio" parentId={null} />
+      </MemoryRouter>
+    </QueryClientProvider>,
+  );
+  await userEvent.click(screen.getByRole("button", { name: /item actions/i }));
+  await userEvent.click(screen.getByRole("menuitem", { name: /manage access/i }));
+  expect(await screen.findByRole("dialog", { name: /manage access/i })).toBeInTheDocument();
+  expect(screen.getByText("Mo Member")).toBeInTheDocument();
+  await userEvent.click(screen.getByRole("tab", { name: /groups/i }));
+  expect(await screen.findByText("Editors")).toBeInTheDocument();
 });
 
 // ---- State-branch requirement: the grants list itself ------------------------
