@@ -1,0 +1,57 @@
+:root {
+  /* Brand */
+  --brand:            #3B3BE8;
+  --brand-hover:      #2323C4;
+  --brand-tint:       #EEEEFD;
+  --brand-tint-2:     #DEDEFB;
+  --brand-tint-3:     #F7F7FE;
+
+  /* Text */
+  --text:             #14161A;
+  --text-secondary:   #5B6169;
+  --text-tertiary:    #8A9099;
+
+  /* Surfaces & borders */
+  --bg:               #F4F5F7;
+  --surface:          #FFFFFF;
+  --surface-subtle:   #F9FAFB;
+  --border:           #E3E5EA;
+  --border-strong:    #C9CDD4;
+  --divider:          #EDEFF2;
+
+  /* Semantic */
+  --success:          #1F7A4C;
+  --success-tint:     #E8F5EE;
+  --danger:           #B4232E;
+  --danger-tint:      #FDF0F1;
+  --warning:          #C2410C;
+  --warning-tint:     #FDE7D6;
+
+  /* Visibility tiers — colour unchanged from the mockup; copy corrected in the UI */
+  --vis-space:        #5B6169;  --vis-space-bg:  #EDEFF2;  --vis-space-dot:  #8A9099;
+  --vis-shared:       #3B3BE8;  --vis-shared-bg: #EEEEFD;  --vis-shared-dot: #3B3BE8;
+  --vis-public:       #1F7A4C;  --vis-public-bg: #E8F5EE;  --vis-public-dot: #1F7A4C;
+
+  /* Dark sidebar variant (the only dark surface in the mockup) */
+  --sidebar-dark-bg:        #14161A;
+  --sidebar-dark-border:    #22252B;
+  --sidebar-dark-text:      #FFFFFF;
+  --sidebar-dark-inactive:  #9AA0A8;
+  --sidebar-dark-active-bg: #22252B;
+
+  /* Type */
+  --font-ui:   'Bricolage Grotesque', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-mono: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  /* Radii */
+  --r-chip: 6px;  --r-control: 8px;  --r-card: 12px;  --r-modal: 14px;  --r-pill: 999px;
+
+  /* Shadows */
+  --shadow-tab:      0 1px 2px rgba(20,22,26,0.09);
+  --shadow-dropdown: 0 12px 32px rgba(20,22,26,0.14);
+  --shadow-toast:    0 16px 40px rgba(20,22,26,0.16);
+  --shadow-modal:    0 24px 64px rgba(20,22,26,0.28);
+
+  /* Motion */
+  --rise: 0.15s ease-out;
+}
