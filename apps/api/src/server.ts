@@ -13,7 +13,8 @@ import {
   type Subject,
 } from "./spaces.ts";
 import { beginUpload, completeUpload } from "./upload.ts";
-import { serveContent } from "./content.ts";
+import { serveContent, streamItem } from "./content.ts";
+import { createShare, listShares, resolveShare, revokeShare } from "./share.ts";
 
 export const routes = {
   "/api/health": { GET: route(async () => json({ ok: true })) },
@@ -202,6 +203,33 @@ export const routes = {
     POST: route(async (req) => {
       await requireAdmin(req);
       return json(await probeBackend(req.params.id));
+    }),
+  },
+
+  "/api/items/:id/shares": {
+    GET: route(async (req) => json(await listShares(await requireUser(req), req.params.id))),
+    POST: route(async (req) => {
+      const u = await requireUser(req);
+      const b = await body<{ mode?: "view" | "download"; password?: string; expiresInDays?: number | null }>(req);
+      return json(await createShare(u, req.params.id, b), 201);
+    }),
+  },
+
+  "/api/shares/:id": {
+    DELETE: route(async (req) => {
+      await revokeShare(await requireUser(req), req.params.id);
+      return new Response(null, { status: 204 });
+    }),
+  },
+
+  // Public. The token is the only credential — no session on this route.
+  // mode: 'view' vs 'download' only picks the Content-Disposition; it is a UX
+  // hint, not access control, since anyone who can view can capture the bytes.
+  "/s/:token": {
+    GET: route(async (req) => {
+      const password = new URL(req.url).searchParams.get("password") ?? undefined;
+      const { link, item } = await resolveShare(req.params.token, password);
+      return streamItem(item, req.headers.get("range"), link.mode === "view" ? "inline" : "attachment");
     }),
   },
 };
