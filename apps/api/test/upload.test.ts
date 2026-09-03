@@ -2,7 +2,7 @@ import { beforeEach, expect, test } from "bun:test";
 import { sql } from "../src/db.ts";
 import { createBackend, invalidateBackendCache, setWriteTarget } from "../src/backends.ts";
 import { beginUpload, completeUpload } from "../src/upload.ts";
-import { createSpace, addSpaceMember } from "../src/spaces.ts";
+import { createSpace, addSpaceMember, grantItem } from "../src/spaces.ts";
 import { createFolder } from "../src/items.ts";
 import { VIEWER } from "../src/perm.ts";
 import { devConfig, makeUser, resetDb } from "./helpers.ts";
@@ -108,6 +108,32 @@ test("uploading into a folder requires EDITOR on that folder", async () => {
   const { item_id } = await beginUpload(owner as any, spaceId, f.id, "in-folder.txt", "text/plain");
   const [row] = await sql`SELECT parent_id FROM items WHERE id = ${item_id}`;
   expect(row.parent_id).toBe(f.id);
+});
+
+test("uploading into a folder is refused for a VIEWER on that folder", async () => {
+  const { owner, spaceId } = await setup();
+  const f = await createFolder(owner as any, spaceId, null, "docs");
+  const viewer = await makeUser();
+  // VIEWER on the folder specifically, not on the space (which has no membership for viewer at all).
+  await grantItem(owner as any, f.id, { type: "user", id: viewer.id }, VIEWER);
+  await expect(
+    beginUpload(viewer as any, spaceId, f.id, "sneaky.txt", "text/plain"),
+  ).rejects.toMatchObject({ status: 403 });
+});
+
+test("completeUpload is refused for a VIEWER, even when the object genuinely exists", async () => {
+  const { owner, spaceId } = await setup();
+  const { item_id, url } = await beginUpload(owner as any, spaceId, null, "shared.txt", "text/plain");
+  // Real object in storage and a genuinely pending row, so a passing test here
+  // can only be explained by the authorization check, not a missing upload.
+  expect((await upload(url, "real bytes")).status).toBe(200);
+
+  const viewer = await makeUser();
+  await grantItem(owner as any, item_id, { type: "user", id: viewer.id }, VIEWER);
+  await expect(completeUpload(viewer as any, item_id)).rejects.toMatchObject({ status: 403 });
+
+  const [row] = await sql`SELECT status FROM items WHERE id = ${item_id}`;
+  expect(row.status).toBe("pending");
 });
 
 test("beginUpload fails cleanly when no write target exists", async () => {
