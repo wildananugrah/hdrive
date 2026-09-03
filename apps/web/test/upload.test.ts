@@ -50,6 +50,11 @@ test("the happy path walks reserve -> upload -> finish and returns the ready ite
 
   expect(phases).toEqual(["reserving", "uploading", "finishing", "done"]);
   expect(fractions.at(-1)).toBe(1);
+  // A stale/late onprogress reporting a smaller fraction after a larger one is
+  // real XHR behaviour; the bar must never visibly jump backwards.
+  for (let i = 1; i < fractions.length; i++) {
+    expect(fractions[i]).toBeGreaterThanOrEqual(fractions[i - 1]);
+  }
   expect(item.status).toBe("ready");
   expect(item.size).toBe(12);
 
@@ -68,10 +73,17 @@ test("the completion call sends NO size or mime — the server reads them from s
 
   await uploadFile({ spaceId: "s1", parentId: null, file: file(), onPhase: () => {}, onProgress: () => {} });
 
+  const completeUrl = String(fetchMock.mock.calls[1][0]);
   const completeBody = fetchMock.mock.calls[1][1]?.body;
   const parsed = completeBody ? JSON.parse(completeBody as string) : {};
   expect(parsed.size).toBeUndefined();
   expect(parsed.mime).toBeUndefined();
+  // The body isn't the only place size/mime could sneak back in — a regression
+  // that moved them into a query string would pass the assertions above while
+  // reintroducing the exact quota-bypass/metadata-forgery primitive this test
+  // exists to prevent, so the URL must carry no query string at all.
+  expect(new URL(completeUrl, "http://x").search).toBe("");
+  expect(completeUrl.endsWith("/complete")).toBe(true);
 });
 
 test("a failed PUT rejects without ever calling complete", async () => {

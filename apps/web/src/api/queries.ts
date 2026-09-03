@@ -74,6 +74,10 @@ export type UploadState = {
 export function useUploads(spaceId: string, parentId: string | null) {
   const qc = useQueryClient();
   const [uploads, setUploads] = useState<UploadState[]>([]);
+  // ponytail: File handles are kept here so retry() can re-send after a
+  // failure, but nothing evicts a "done" entry until its toast is dismissed —
+  // a long session with many uploads and no dismissals accumulates handles.
+  // Upgrade: evict on phase "done" once the toast auto-dismisses, or cap the map.
   const files = useRef(new Map<string, File>());
 
   const patch = (id: string, next: Partial<UploadState>) =>
