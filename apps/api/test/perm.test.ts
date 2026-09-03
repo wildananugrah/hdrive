@@ -1,6 +1,7 @@
 import { beforeEach, expect, test } from "bun:test";
 import { sql, uuids } from "../src/db.ts";
 import { EDITOR, OWNER, VIEWER, effectiveRole, requireItem, requireSpace } from "../src/perm.ts";
+import { createSpace, listSpaces, addSpaceMember } from "../src/spaces.ts";
 import { makeUser, resetDb } from "./helpers.ts";
 
 beforeEach(resetDb);
@@ -141,4 +142,32 @@ test("a deleted item is not loadable by default", async () => {
   await expect(requireItem(u.id, t.file.id, VIEWER)).rejects.toMatchObject({ status: 404 });
   const it = await requireItem(u.id, t.file.id, VIEWER, { includeDeleted: true });
   expect(it.id).toBe(t.file.id);
+});
+
+test("the space creator becomes its owner", async () => {
+  const u = await makeUser();
+  const s = await createSpace(u as any, "Marketing");
+  expect(await requireSpace(u.id, s.id, OWNER)).toBe(OWNER);
+  expect((await listSpaces(u.id)).map((x: any) => x.id)).toContain(s.id);
+});
+
+test("only an owner can add space members", async () => {
+  const owner = await makeUser();
+  const other = await makeUser();
+  const s = await createSpace(owner as any, "M");
+  await expect(
+    addSpaceMember(other as any, s.id, { type: "user", id: other.id }, VIEWER),
+  ).rejects.toMatchObject({ status: 404 });
+
+  await addSpaceMember(owner as any, s.id, { type: "user", id: other.id }, VIEWER);
+  expect(await requireSpace(other.id, s.id, VIEWER)).toBe(VIEWER);
+});
+
+test("adding an existing member updates their role", async () => {
+  const owner = await makeUser();
+  const other = await makeUser();
+  const s = await createSpace(owner as any, "M");
+  await addSpaceMember(owner as any, s.id, { type: "user", id: other.id }, VIEWER);
+  await addSpaceMember(owner as any, s.id, { type: "user", id: other.id }, EDITOR);
+  expect(await requireSpace(other.id, s.id, EDITOR)).toBe(EDITOR);
 });
