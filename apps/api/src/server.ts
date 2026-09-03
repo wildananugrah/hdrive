@@ -143,15 +143,23 @@ export const routes = {
     GET: route(async (req) => { await requireAdmin(req); return json(await listBackends()); }),
     POST: route(async (req) => {
       await requireAdmin(req);
-      const b = await body<any>(req);
-      return json(await createBackend(b), 201);
+      const b = await body<Record<string, unknown>>(req);
+      return json(await createBackend({
+        name: str(b.name, "name"),
+        config: (b.config ?? {}) as any,
+        makeWriteTarget: b.makeWriteTarget === true,
+      }), 201);
     }),
   },
 
   "/api/admin/backends/:id": {
     PATCH: route(async (req) => {
       await requireAdmin(req);
-      return json(await updateBackend(req.params.id, await body<any>(req)));
+      const b = await body<Record<string, unknown>>(req);
+      const patch: { name?: string; config?: any } = {};
+      if (b.name !== undefined) patch.name = str(b.name, "name");
+      if (b.config !== undefined) patch.config = b.config;
+      return json(await updateBackend(req.params.id, patch));
     }),
     DELETE: route(async (req) => {
       await requireAdmin(req);

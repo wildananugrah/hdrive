@@ -1,11 +1,12 @@
 import { beforeEach, expect, test } from "bun:test";
 import { s3Backend } from "../src/storage/s3.ts";
 import {
-  backendFor, createBackend, invalidateBackendCache, listBackends,
-  probeBackend, setWriteTarget, writeTarget,
+  backendFor, createBackend, deleteBackend, invalidateBackendCache, listBackends,
+  probeBackend, setWriteTarget, updateBackend, writeTarget,
 } from "../src/backends.ts";
-import { sql } from "../src/db.ts";
-import { devConfig, resetDb } from "./helpers.ts";
+import { sql, uuids } from "../src/db.ts";
+import { createSpace } from "../src/spaces.ts";
+import { devConfig, makeUser, resetDb, withServer } from "./helpers.ts";
 
 beforeEach(async () => { await resetDb(); invalidateBackendCache(); });
 
@@ -65,11 +66,23 @@ test("getStream honours a byte range with an inclusive end", async () => {
   await b.delete(key);
 });
 
-test("credentials are encrypted at rest and never returned", async () => {
+test("credentials are encrypted at rest, decrypt only with the right key, and round-trip", async () => {
   const created = await createBackend({ name: "primary", config: devConfig, makeWriteTarget: true });
   const [raw] = await sql`SELECT config FROM storage_backends WHERE id = ${created.id}`;
   const blob = Buffer.from(raw.config).toString("utf8");
-  expect(blob).not.toContain(devConfig.secretAccessKey);
+  expect(blob).not.toContain(devConfig.secretAccessKey); // cheap sanity check, not the real proof
+
+  // The real proof: the WRONG key must not recover the config (any encoding
+  // that isn't real encryption — base64, hex, ... — would fail this too, since
+  // pgp_sym_decrypt rejects anything that isn't its own ciphertext).
+  await expect(Promise.resolve(
+    sql`SELECT pgp_sym_decrypt(config, 'not-the-real-key') AS c FROM storage_backends WHERE id = ${created.id}`,
+  )).rejects.toBeTruthy();
+
+  // ...and the RIGHT key must round-trip the exact original config.
+  const [dec] = await sql`SELECT pgp_sym_decrypt(config, ${process.env.STORAGE_CONFIG_KEY})::text AS c
+                            FROM storage_backends WHERE id = ${created.id}`;
+  expect(JSON.parse(dec.c)).toEqual(devConfig);
 
   for (const b of await listBackends()) {
     expect(JSON.stringify(b)).not.toContain(devConfig.secretAccessKey);
@@ -112,4 +125,72 @@ test("backendFor caches, and invalidation picks up a config change", async () =>
   expect(await backendFor(created.id)).toBe(first); // same instance
   invalidateBackendCache(created.id);
   expect(await backendFor(created.id)).not.toBe(first);
+});
+
+test("head rejects rather than returning null when credentials are bad", async () => {
+  const bad = s3Backend({ ...devConfig, secretAccessKey: "wrong-secret-value" });
+  // A rejection, not a resolved null: an auth failure must not read as "file is gone".
+  await expect(bad.head(`test/${crypto.randomUUID()}`)).rejects.toBeTruthy();
+});
+
+test("updateBackend changes name and config", async () => {
+  const created = await createBackend({ name: "orig", config: devConfig });
+  const renamed = await updateBackend(created.id, { name: "renamed" });
+  expect(renamed.name).toBe("renamed");
+
+  const rotated = { ...devConfig, accessKeyId: "hdrive-rotated" };
+  await updateBackend(created.id, { config: rotated });
+  const [row] = await sql`SELECT pgp_sym_decrypt(config, ${process.env.STORAGE_CONFIG_KEY})::text AS c
+                            FROM storage_backends WHERE id = ${created.id}`;
+  expect(JSON.parse(row.c)).toEqual(rotated);
+});
+
+test("updateBackend's own call site invalidates the cache: backendFor picks up the new config", async () => {
+  const created = await createBackend({ name: "cache-site", config: devConfig });
+  const credOf = (url: string) => new URL(url).searchParams.get("X-Amz-Credential")?.split("/")[0];
+
+  const before = await backendFor(created.id); // populates the cache with the OLD config
+  expect(credOf(before.presignPut("k", "text/plain"))).toBe(devConfig.accessKeyId);
+
+  await updateBackend(created.id, { config: { ...devConfig, accessKeyId: "hdrive-rotated" } });
+
+  const after = await backendFor(created.id);
+  expect(after).not.toBe(before); // a stale cached instance would fail this
+  expect(credOf(after.presignPut("k", "text/plain"))).toBe("hdrive-rotated");
+});
+
+test("deleteBackend refuses while an item points here, and succeeds once none do", async () => {
+  const backend = await createBackend({ name: "d", config: devConfig });
+  const user = await makeUser();
+  const space = await createSpace(user as any, "S");
+  const itemId = crypto.randomUUID();
+  await sql`
+    INSERT INTO items (id, space_id, parent_id, kind, name, path_ids, storage_backend_id, storage_key, created_by, status)
+    VALUES (${itemId}, ${space.id}, NULL, 'file', 'f.txt', ${uuids([itemId])}::uuid[], ${backend.id}, 'k', ${user.id}, 'ready')`;
+
+  await expect(deleteBackend(backend.id)).rejects.toMatchObject({ status: 409 });
+
+  await sql`DELETE FROM items WHERE id = ${itemId}`;
+  await deleteBackend(backend.id); // now succeeds
+  expect(await sql`SELECT id FROM storage_backends WHERE id = ${backend.id}`).toEqual([]);
+});
+
+test("deleteBackend on an unknown id returns 404, not a silent success", async () => {
+  await expect(deleteBackend(crypto.randomUUID())).rejects.toMatchObject({ status: 404 });
+});
+
+test("probeBackend on an unknown id returns 404, not a 500", async () => {
+  await expect(probeBackend(crypto.randomUUID())).rejects.toMatchObject({ status: 404 });
+});
+
+test("a non-string backend name returns 400 over HTTP, not 500", async () => {
+  await withServer(async (base) => {
+    const admin = await makeUser({ admin: true });
+    const res = await fetch(`${base}/api/admin/backends`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${admin.token}` },
+      body: JSON.stringify({ name: 123, config: devConfig }),
+    });
+    expect(res.status).toBe(400);
+  });
 });

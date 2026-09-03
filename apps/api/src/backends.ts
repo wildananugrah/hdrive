@@ -6,7 +6,14 @@ import { s3Backend, type S3Config } from "./storage/s3.ts";
 const KEY = process.env.STORAGE_CONFIG_KEY;
 if (!KEY) throw new Error("STORAGE_CONFIG_KEY is required");
 
-/** Instances are cached by backend id; they hold no per-request state. */
+/**
+ * Instances are cached by backend id; they hold no per-request state.
+ * ponytail: process-local cache, no TTL or cross-process invalidation channel.
+ * With more than one API process, an admin rotating credentials leaves the
+ * OTHER processes on a stale S3Client (revoked keys) until they restart.
+ * Upgrade path: a TTL on cache entries, or a LISTEN/NOTIFY channel that calls
+ * invalidateBackendCache() on every process when a backend is updated.
+ */
 const cache = new Map<string, StorageBackend>();
 
 export function invalidateBackendCache(id?: string) {
@@ -27,12 +34,19 @@ export async function createBackend(input: {
 }) {
   if (!input.name?.trim()) throw new HttpError(400, "name is required");
   const cfg = checkConfig(input.config);
-  const [row] = await sql`
-    INSERT INTO storage_backends (name, provider, config)
-    VALUES (${input.name.trim()}, 's3', pgp_sym_encrypt(${JSON.stringify(cfg)}, ${KEY}))
-    RETURNING id, name, provider, is_write_target, created_at`;
-  if (input.makeWriteTarget) await setWriteTarget(row.id);
-  return row;
+  // One transaction: a failed write-target switch must not leave an orphaned
+  // backend row that was inserted but never became reachable.
+  return await sql.begin(async (tx: any) => {
+    const [row] = await tx`
+      INSERT INTO storage_backends (name, provider, config)
+      VALUES (${input.name.trim()}, 's3', pgp_sym_encrypt(${JSON.stringify(cfg)}, ${KEY}))
+      RETURNING id, name, provider, is_write_target, created_at`;
+    if (input.makeWriteTarget) {
+      await clearAndSetWriteTarget(tx, row.id);
+      row.is_write_target = true;
+    }
+    return row;
+  });
 }
 
 /** Never returns config: credentials do not leave the server, even for admins. */
@@ -68,8 +82,15 @@ export async function updateBackend(id: string, patch: { name?: string; config?:
 export async function deleteBackend(id: string) {
   const [{ count }] = await sql`SELECT count(*)::int AS count FROM items WHERE storage_backend_id = ${id}`;
   if (count > 0) throw new HttpError(409, `${count} file(s) still stored here; cannot delete this backend`);
-  await sql`DELETE FROM storage_backends WHERE id = ${id}`;
+  const [row] = await sql`DELETE FROM storage_backends WHERE id = ${id} RETURNING id`;
+  if (!row) throw new HttpError(404, "backend not found");
   invalidateBackendCache(id);
+}
+
+/** Shared by setWriteTarget and createBackend({ makeWriteTarget: true }) so both run inside one transaction. */
+async function clearAndSetWriteTarget(tx: any, id: string) {
+  await tx`UPDATE storage_backends SET is_write_target = false WHERE is_write_target`;
+  await tx`UPDATE storage_backends SET is_write_target = true WHERE id = ${id}`;
 }
 
 /**
@@ -80,8 +101,7 @@ export async function setWriteTarget(id: string) {
   await sql.begin(async (tx: any) => {
     const [exists] = await tx`SELECT 1 FROM storage_backends WHERE id = ${id}`;
     if (!exists) throw new HttpError(404, "backend not found");
-    await tx`UPDATE storage_backends SET is_write_target = false WHERE is_write_target`;
-    await tx`UPDATE storage_backends SET is_write_target = true WHERE id = ${id}`;
+    await clearAndSetWriteTarget(tx, id);
   });
 }
 
@@ -111,8 +131,11 @@ export async function writeTarget(): Promise<{ id: string; backend: StorageBacke
  * upload. Never throws: a failed step is the result.
  */
 export async function probeBackend(id: string) {
+  const [exists] = await sql`SELECT 1 FROM storage_backends WHERE id = ${id}`;
+  if (!exists) throw new HttpError(404, "backend not found");
   const b = await backendFor(id);
   const key = `__hdrive_probe/${crypto.randomUUID()}`;
+  const probeBody = "hdrive-probe";
   const steps: { step: string; ok: boolean; detail?: string }[] = [];
 
   const run = async (step: string, fn: () => Promise<void>) => {
@@ -122,7 +145,7 @@ export async function probeBackend(id: string) {
 
   const ok1 = await run("presign+put", async () => {
     const r = await fetch(b.presignPut(key, "text/plain", 120), {
-      method: "PUT", body: "hdrive-probe", headers: { "content-type": "text/plain" },
+      method: "PUT", body: probeBody, headers: { "content-type": "text/plain" },
     });
     if (!r.ok) throw new Error(`PUT returned ${r.status}`);
   });
@@ -134,7 +157,11 @@ export async function probeBackend(id: string) {
     await run("range-get", async () => {
       const r = await b.getStream(key, "bytes=0-3");
       if (r.status !== 206) throw new Error(`expected 206, got ${r.status}`);
-      await r.text();
+      // Not just the status: a backend that ignores Range and returns the
+      // whole object would still be 206-shaped-enough to fool a status check.
+      const text = await r.text();
+      const expected = probeBody.slice(0, 4);
+      if (text !== expected) throw new Error(`expected slice ${JSON.stringify(expected)}, got ${JSON.stringify(text)}`);
     });
     await run("delete", () => b.delete(key));
   }
