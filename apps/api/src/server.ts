@@ -49,8 +49,8 @@ export const routes = {
     GET: route(async (req) => json(await listSpaces((await requireUser(req)).id))),
     POST: route(async (req) => {
       const u = await requireUser(req);
-      const b = await body<{ name: string }>(req);
-      return json(await createSpace(u, b.name), 201);
+      const b = await body<Record<string, unknown>>(req);
+      return json(await createSpace(u, str(b.name, "name")), 201);
     }),
   },
 
@@ -71,23 +71,23 @@ export const routes = {
 
   "/api/groups": {
     POST: route(async (req) => {
-      await requireAdmin(req);
-      const b = await body<{ name: string }>(req);
-      return json(await createGroup(b.name), 201);
+      const u = await requireAdmin(req);
+      const b = await body<Record<string, unknown>>(req);
+      return json(await createGroup(u, str(b.name, "name")), 201);
     }),
   },
 
   "/api/groups/:id/members": {
     POST: route(async (req) => {
-      await requireAdmin(req);
-      const b = await body<{ user_id: string }>(req);
-      await addGroupMember(req.params.id, b.user_id);
+      const u = await requireAdmin(req);
+      const b = await body<Record<string, unknown>>(req);
+      await addGroupMember(u, req.params.id, str(b.user_id, "user_id"));
       return new Response(null, { status: 204 });
     }),
     DELETE: route(async (req) => {
-      await requireAdmin(req);
-      const b = await body<{ user_id: string }>(req);
-      await removeGroupMember(req.params.id, b.user_id);
+      const u = await requireAdmin(req);
+      const b = await body<Record<string, unknown>>(req);
+      await removeGroupMember(u, req.params.id, str(b.user_id, "user_id"));
       return new Response(null, { status: 204 });
     }),
   },

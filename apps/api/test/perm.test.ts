@@ -1,8 +1,8 @@
 import { beforeEach, expect, test } from "bun:test";
 import { sql, uuids } from "../src/db.ts";
 import { EDITOR, OWNER, VIEWER, effectiveRole, requireItem, requireSpace } from "../src/perm.ts";
-import { createSpace, listSpaces, addSpaceMember } from "../src/spaces.ts";
-import { makeUser, resetDb } from "./helpers.ts";
+import { addGroupMember, addSpaceMember, createGroup, createSpace, listSpaces } from "../src/spaces.ts";
+import { makeUser, resetDb, withServer } from "./helpers.ts";
 
 beforeEach(resetDb);
 
@@ -118,12 +118,54 @@ test("an admin gets NO implicit access to file content", async () => {
   // Spec §5: admin power is the admin surface (backends, users, groups), not
   // silent read access to everyone's files. An admin who needs a file grants
   // themselves access, which leaves a row behind.
+  //
+  // This must insert a REAL grant held by a different (non-admin) user so the
+  // test actually exercises the subject filter — a vacuous version with zero
+  // grant rows would pass even if admins bypassed everything.
   const u = await makeUser();
   const admin = await makeUser({ admin: true });
   const t = await tree(u.id);
+  await grantItem(t.file.id, "user", u.id, OWNER);
   expect(admin.is_admin).toBe(true);
   expect(await effectiveRole(admin.id, t.spaceId, t.file.path)).toBeNull();
   await expect(requireItem(admin.id, t.file.id, VIEWER)).rejects.toMatchObject({ status: 404 });
+});
+
+test("a group's space role does not reach a non-member", async () => {
+  const member = await makeUser();
+  const outsider = await makeUser();
+  const t = await tree(member.id);
+  const [g] = await sql`INSERT INTO groups (name) VALUES ('eng') RETURNING id`;
+  await sql`INSERT INTO group_members (group_id, user_id) VALUES (${g.id}, ${member.id})`;
+  await grantSpace(t.spaceId, "group", g.id, EDITOR);
+  expect(await effectiveRole(outsider.id, t.spaceId, t.file.path)).toBeNull();
+});
+
+test("membership in one space does not grant access to another space", async () => {
+  const u = await makeUser();
+  const tA = await tree(u.id);
+  const tB = await tree(u.id);
+  await grantSpace(tA.spaceId, "user", u.id, OWNER);
+  expect(await effectiveRole(u.id, tB.spaceId, tB.file.path)).toBeNull();
+});
+
+test("an item grant held by one user does not reach another user", async () => {
+  const a = await makeUser();
+  const b = await makeUser();
+  const t = await tree(a.id);
+  await grantItem(t.file.id, "user", a.id, OWNER);
+  expect(await effectiveRole(b.id, t.spaceId, t.file.path)).toBeNull();
+});
+
+test("a group item grant reaches members and not non-members", async () => {
+  const member = await makeUser();
+  const outsider = await makeUser();
+  const t = await tree(member.id);
+  const [g] = await sql`INSERT INTO groups (name) VALUES ('eng') RETURNING id`;
+  await sql`INSERT INTO group_members (group_id, user_id) VALUES (${g.id}, ${member.id})`;
+  await grantItem(t.file.id, "group", g.id, EDITOR);
+  expect(await effectiveRole(member.id, t.spaceId, t.file.path)).toBe(EDITOR);
+  expect(await effectiveRole(outsider.id, t.spaceId, t.file.path)).toBeNull();
 });
 
 test("requireSpace resolves with an empty path", async () => {
@@ -170,4 +212,41 @@ test("adding an existing member updates their role", async () => {
   await addSpaceMember(owner as any, s.id, { type: "user", id: other.id }, VIEWER);
   await addSpaceMember(owner as any, s.id, { type: "user", id: other.id }, EDITOR);
   expect(await requireSpace(other.id, s.id, EDITOR)).toBe(EDITOR);
+});
+
+test("group mutators reject a non-admin caller even when invoked directly", async () => {
+  const nonAdmin = await makeUser();
+  const admin = await makeUser({ admin: true });
+  const g = await createGroup(admin as any, "eng");
+  await expect(createGroup(nonAdmin as any, "sales")).rejects.toMatchObject({ status: 403 });
+  await expect(addGroupMember(nonAdmin as any, g.id, nonAdmin.id)).rejects.toMatchObject({ status: 403 });
+});
+
+test("a malformed subject id is rejected with 400, not a Postgres error", async () => {
+  const owner = await makeUser();
+  const s = await createSpace(owner as any, "M");
+  await expect(
+    addSpaceMember(owner as any, s.id, { type: "user", id: "not-a-uuid" }, VIEWER),
+  ).rejects.toMatchObject({ status: 400 });
+});
+
+test("an out-of-range role is rejected with 400, not a Postgres error", async () => {
+  const owner = await makeUser();
+  const other = await makeUser();
+  const s = await createSpace(owner as any, "M");
+  await expect(
+    addSpaceMember(owner as any, s.id, { type: "user", id: other.id }, 99),
+  ).rejects.toMatchObject({ status: 400 });
+});
+
+test("a non-string name field returns 400 over HTTP, not 500", async () => {
+  await withServer(async (base) => {
+    const owner = await makeUser();
+    const res = await fetch(`${base}/api/spaces`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${owner.token}` },
+      body: JSON.stringify({ name: 123 }),
+    });
+    expect(res.status).toBe(400);
+  });
 });

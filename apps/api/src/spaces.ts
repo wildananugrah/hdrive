@@ -1,13 +1,25 @@
 import { sql } from "./db.ts";
 import { HttpError } from "./http.ts";
 import type { User } from "./auth.ts";
-import { EDITOR, OWNER, VIEWER, requireItem, requireSpace } from "./perm.ts";
+import { OWNER, VIEWER, requireItem, requireSpace } from "./perm.ts";
 
 export type Subject = { type: "user" | "group"; id: string };
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 function checkSubject(s: Subject) {
   if (s?.type !== "user" && s?.type !== "group") throw new HttpError(400, "subject.type must be user or group");
-  if (!/^[0-9a-f-]{36}$/i.test(s?.id ?? "")) throw new HttpError(400, "subject.id must be a uuid");
+  if (!UUID_RE.test(s?.id ?? "")) throw new HttpError(400, "subject.id must be a uuid");
+}
+
+function checkRole(role: number) {
+  if (!Number.isInteger(role) || role < VIEWER || role > OWNER) {
+    throw new HttpError(400, "role must be viewer, editor, or owner");
+  }
+}
+
+function requireAdminUser(user: User) {
+  if (!user?.is_admin) throw new HttpError(403, "admin only");
 }
 
 /** The creator becomes the space's owner; otherwise nobody could administer it. */
@@ -34,6 +46,7 @@ export async function listSpaces(userId: string) {
 
 export async function addSpaceMember(user: User, spaceId: string, subject: Subject, role: number) {
   checkSubject(subject);
+  checkRole(role);
   await requireSpace(user.id, spaceId, OWNER);
   await sql`
     INSERT INTO space_members (space_id, subject_type, subject_id, role)
@@ -48,8 +61,10 @@ export async function removeSpaceMember(user: User, spaceId: string, subject: Su
              WHERE space_id = ${spaceId} AND subject_type = ${subject.type} AND subject_id = ${subject.id}`;
 }
 
-/** Groups are org-wide, so only admins manage them. */
-export async function createGroup(name: string) {
+/** Groups are org-wide, so only admins manage them. Self-guarded: does not rely
+ *  solely on the route remembering to call requireAdmin. */
+export async function createGroup(user: User, name: string) {
+  requireAdminUser(user);
   if (!name?.trim()) throw new HttpError(400, "name is required");
   try {
     const [g] = await sql`INSERT INTO groups (name) VALUES (${name.trim()}) RETURNING *`;
@@ -60,7 +75,8 @@ export async function createGroup(name: string) {
   }
 }
 
-export async function addGroupMember(groupId: string, userId: string) {
+export async function addGroupMember(user: User, groupId: string, userId: string) {
+  requireAdminUser(user);
   try {
     await sql`INSERT INTO group_members (group_id, user_id) VALUES (${groupId}, ${userId})
               ON CONFLICT DO NOTHING`;
@@ -70,13 +86,15 @@ export async function addGroupMember(groupId: string, userId: string) {
   }
 }
 
-export async function removeGroupMember(groupId: string, userId: string) {
+export async function removeGroupMember(user: User, groupId: string, userId: string) {
+  requireAdminUser(user);
   await sql`DELETE FROM group_members WHERE group_id = ${groupId} AND user_id = ${userId}`;
 }
 
 /** Managing grants on an item requires OWNER on that item. */
 export async function grantItem(user: User, itemId: string, subject: Subject, role: number) {
   checkSubject(subject);
+  checkRole(role);
   await requireItem(user.id, itemId, OWNER);
   await sql`
     INSERT INTO item_grants (item_id, subject_type, subject_id, role)
