@@ -258,3 +258,30 @@ test("CORS: a foreign origin also gets no credentialed headers on a 404", async 
     expect(r.headers.get("access-control-allow-credentials")).toBeNull();
   });
 });
+
+// A browser cannot read an error body across origins without CORS headers on
+// the error response itself -- so a 401/403 missing them would surface to the
+// user as a generic "network error" instead of "invalid credentials"/"forbidden".
+// This holds today because route()'s shared catch wraps every response, but
+// a future refactor that special-cases auth errors before that wrapper could
+// break it silently.
+test("CORS: an unauthenticated 401 still carries credentialed CORS headers", async () => {
+  await withServer(async (base) => {
+    const r = await fetch(`${base}/api/auth/me`, { headers: { origin: "http://localhost:5183" } });
+    expect(r.status).toBe(401);
+    expect(r.headers.get("access-control-allow-origin")).toBe("http://localhost:5183");
+    expect(r.headers.get("access-control-allow-credentials")).toBe("true");
+  });
+});
+
+test("CORS: a non-admin's 403 still carries credentialed CORS headers", async () => {
+  await withServer(async (base) => {
+    const plain = await makeUser();
+    const r = await fetch(`${base}/api/admin/users`, {
+      headers: { origin: "http://localhost:5183", authorization: `Bearer ${plain.token}` },
+    });
+    expect(r.status).toBe(403);
+    expect(r.headers.get("access-control-allow-origin")).toBe("http://localhost:5183");
+    expect(r.headers.get("access-control-allow-credentials")).toBe("true");
+  });
+});

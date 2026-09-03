@@ -331,6 +331,29 @@ test("listChildren: a grant flips has_grants only", async () => {
   expect(row.has_live_share).toBe(false);
 });
 
+test("listChildren: a grant on an ancestor folder does NOT set has_grants on a child file", async () => {
+  const { owner, spaceId } = await setup();
+  const folder = await createFolder(owner as any, spaceId, null, "folder");
+  const fileId = crypto.randomUUID();
+  await sql`INSERT INTO items (id, space_id, parent_id, kind, name, path_ids, created_by, status)
+            VALUES (${fileId}, ${spaceId}, ${folder.id}, 'file', 'f.txt',
+                    ${uuids([folder.id, fileId])}::uuid[], ${owner.id}, 'ready')`;
+  const guest = await makeUser();
+  // grant lives on the FOLDER, not the file -- effectiveRole() still lets it
+  // inherit down to the file (path_ids includes ancestors), but has_grants
+  // must reflect only grants on the item itself, or the VISIBILITY badge
+  // would lie about where the grant actually sits.
+  await sql`INSERT INTO item_grants (item_id, subject_type, subject_id, role)
+            VALUES (${folder.id}, 'user', ${guest.id}, ${VIEWER})`;
+
+  const rootRow = await childRow(owner, spaceId, folder.id);
+  expect(rootRow.has_grants).toBe(true);
+
+  const childRows = await listChildren(owner as any, spaceId, folder.id);
+  const fileRow = (childRows as any[]).find((r) => r.id === fileId)!;
+  expect(fileRow.has_grants).toBe(false);
+});
+
 test("listChildren: a live link flips has_live_share only", async () => {
   const { owner, spaceId } = await setup();
   const a = await createFolder(owner as any, spaceId, null, "a");
