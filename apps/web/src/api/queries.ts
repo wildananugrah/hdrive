@@ -4,7 +4,7 @@
 
 import { useCallback, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { api } from "./client";
+import { api, API_BASE } from "./client";
 import { isUnauthorized } from "./errors";
 import type { Item, Space, User } from "./types";
 import { uploadFile, type UploadPhase } from "./upload";
@@ -120,3 +120,17 @@ export function useUploads(spaceId: string, parentId: string | null) {
 
   return { uploads, start, retry, dismiss };
 }
+
+// ---- Item detail (Task 8) ------------------------------------------------
+
+export function useItem(itemId: string) {
+  return useQuery<Item>({
+    queryKey: ["item", itemId],
+    queryFn: () => api.get<Item>(`/api/items/${itemId}`),
+    enabled: Boolean(itemId),
+  });
+}
+
+/** attachment (download) by default; ?inline=1 for in-browser playback/viewing. */
+export const contentUrl = (itemId: string, opts: { inline?: boolean } = {}) =>
+  `${API_BASE}/api/items/${itemId}/content${opts.inline ? "?inline=1" : ""}`;

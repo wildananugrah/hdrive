@@ -56,6 +56,20 @@ test("pending uploads are not listed as if they were ready", () => {
   expect(screen.getByText(/uploading/i)).toBeInTheDocument();
 });
 
+// /i/:id now exists (Task 8) and 409s on content for a pending item, so a
+// pending row's name must not be a Link — only a ready row's name is.
+test("a pending row's name is not a link; a ready row's name is", () => {
+  wrap(
+    <FileTable
+      items={[item({ id: "i1", status: "pending", name: "half.txt" }), item({ id: "i2", name: "done.txt" })]}
+      spaceId="s1"
+      spaceName="Studio"
+    />,
+  );
+  expect(screen.getByText("half.txt").closest("a")).toBeNull();
+  expect(screen.getByText("done.txt").closest("a")).toHaveAttribute("href", "/i/i2");
+});
+
 test("an empty folder shows the empty state, not a bare table", () => {
   wrap(<FileTable items={[]} spaceId="s1" spaceName="Studio" />);
   expect(screen.getByText(/nothing here yet/i)).toBeInTheDocument();

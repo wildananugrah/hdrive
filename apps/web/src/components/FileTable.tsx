@@ -25,9 +25,15 @@ export default function FileTable(
         {items.map((it) => (
           <tr key={it.id}>
             <td>
-              <Link to={it.kind === "folder" ? `/s/${spaceId}/f/${it.id}` : `/i/${it.id}`}>
-                {it.name}
-              </Link>
+              {it.status === "pending" ? (
+                // Still uploading: /i/:id would only 409 on content, so this
+                // is a plain non-interactive label, not a Link.
+                <span>{it.name}</span>
+              ) : (
+                <Link to={it.kind === "folder" ? `/s/${spaceId}/f/${it.id}` : `/i/${it.id}`}>
+                  {it.name}
+                </Link>
+              )}
               {it.status === "pending" && <span className="pill-muted">Uploading…</span>}
             </td>
             <td>—</td>
