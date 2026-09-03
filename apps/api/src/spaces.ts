@@ -138,6 +138,21 @@ export async function listGroupMembers(user: User, groupId: string) {
      ORDER BY lower(u.name)`;
 }
 
+/** Live sum; no stored counter to drift. Folders have a NULL size and
+ *  contribute nothing, so no kind filter is needed. No quota exists in this
+ *  system, so this reports usage against no limit — do not add one. */
+export async function spaceUsage(user: User, spaceId: string): Promise<{ bytes: number; items: number }> {
+  await requireSpace(user.id, spaceId, VIEWER);
+  const [row] = await sql`
+    SELECT COALESCE(SUM(size), 0)::bigint AS bytes, COUNT(*)::int AS items
+      FROM items
+     WHERE space_id = ${spaceId}
+       AND status = 'ready'
+       AND deleted_at IS NULL
+       AND size IS NOT NULL`;
+  return { bytes: Number(row.bytes), items: row.items };
+}
+
 /**
  * Members of a space, with each subject resolved to a display name.
  * Requires VIEWER on the space: anyone who can see the space can see who is in

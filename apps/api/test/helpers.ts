@@ -1,4 +1,4 @@
-import { sql } from "../src/db.ts";
+import { sql, uuids } from "../src/db.ts";
 import { login, register } from "../src/auth.ts";
 import { serve } from "../src/server.ts";
 import type { S3Config } from "../src/storage/s3.ts";
@@ -31,6 +31,31 @@ export async function makeUser(opts: { admin?: boolean; password?: string } = {}
   }
   const { token } = await login(email, password);
   return { ...user, token, password };
+}
+
+/** Minimal item row for usage/listing tests. A root item (no parent), whose
+ *  path_ids is just its own id, matching how items.ts builds path_ids.
+ *  created_by is the space's owner, so the FK is satisfied without callers
+ *  needing to pass a user. */
+export async function seedItem(
+  spaceId: string,
+  opts: {
+    kind?: "file" | "folder";
+    size?: number | null;
+    status?: "pending" | "ready";
+    deleted?: boolean;
+  } = {},
+) {
+  const id = crypto.randomUUID();
+  const [row] = await sql`
+    INSERT INTO items (id, space_id, parent_id, kind, name, path_ids, size, status,
+                       created_by, deleted_at)
+    VALUES (${id}, ${spaceId}, NULL, ${opts.kind ?? "file"}, ${`item-${id}`},
+            ${uuids([id])}::uuid[], ${opts.size ?? null}, ${opts.status ?? "ready"},
+            (SELECT subject_id FROM space_members WHERE space_id = ${spaceId} LIMIT 1),
+            ${opts.deleted ? new Date() : null})
+    RETURNING *`;
+  return row;
 }
 
 export async function withServer<T>(fn: (base: string) => Promise<T>): Promise<T> {

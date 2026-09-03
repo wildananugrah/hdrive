@@ -12,7 +12,7 @@ import {
 import {
   addGroupMember, addSpaceMember, createGroup, createSpace, grantItem,
   listGroupMembers, listGroups, listItemGrants, listSpaceMembers, listSpaces,
-  removeGroupMember, removeSpaceMember, revokeItemGrant,
+  removeGroupMember, removeSpaceMember, revokeItemGrant, spaceUsage,
   type Subject,
 } from "./spaces.ts";
 import { beginUpload, completeUpload } from "./upload.ts";
@@ -111,6 +111,10 @@ export const routes = {
       await removeGroupMember(u, req.params.id, str(b.user_id, "user_id"));
       return new Response(null, { status: 204 });
     }),
+  },
+
+  "/api/spaces/:id/usage": {
+    GET: route(async (req) => json(await spaceUsage(await requireUser(req), req.params.id))),
   },
 
   "/api/spaces/:id/children": {
