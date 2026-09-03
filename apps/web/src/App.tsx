@@ -8,6 +8,9 @@ import SignIn from "./routes/SignIn";
 import SpaceRedirect from "./routes/SpaceRedirect";
 import Trash from "./routes/Trash";
 import Unlock from "./routes/share/Unlock";
+import Backends from "./routes/admin/Backends";
+import Groups from "./routes/admin/Groups";
+import Users from "./routes/admin/Users";
 import "./styles/shell.css";
 
 export default function App() {
@@ -21,12 +24,17 @@ export default function App() {
       <Route element={<RequireAuth />}>
         <Route path="/" element={<SpaceRedirect />} />
         <Route element={<AppShell />}>
-          {/* Admin screens are added in Tasks 10-11. */}
           <Route path="/s/:spaceId" element={<Files />} />
           <Route path="/s/:spaceId/f/:itemId" element={<Files />} />
           <Route path="/s/:spaceId/trash" element={<Trash />} />
           <Route path="/i/:itemId" element={<Item />} />
           <Route path="/settings" element={<Settings />} />
+          {/* requireAdmin enforces this server-side regardless; each screen
+              also guards on me.is_admin so a forced URL renders a Forbidden
+              state instead of a broken admin page. */}
+          <Route path="/admin/backends" element={<Backends />} />
+          <Route path="/admin/users" element={<Users />} />
+          <Route path="/admin/groups" element={<Groups />} />
         </Route>
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />

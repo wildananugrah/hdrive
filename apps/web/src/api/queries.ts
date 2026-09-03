@@ -6,7 +6,9 @@ import { useCallback, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, API_BASE } from "./client";
 import { isUnauthorized } from "./errors";
-import type { CreatedShareLink, Item, ShareLink, Space, User } from "./types";
+import type {
+  Backend, CreatedShareLink, Grant, Group, Item, ProbeResult, ShareLink, Space, SpaceMember, Subject, User,
+} from "./types";
 import { uploadFile, type UploadPhase } from "./upload";
 
 // ---- Auth (Task 4) ---------------------------------------------------
@@ -229,5 +231,94 @@ export function useRevokeShare(itemId: string) {
   return useMutation({
     mutationFn: (linkId: string) => api.del<null>(`/api/shares/${linkId}`),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["shares", itemId] }),
+  });
+}
+
+// ---- Permissions & admin (Task 11) ----------------------------------------
+// listGroups/listGroupMembers ultimately require admin server-side (a plain
+// space member calling GET /api/groups still 403s), but listBackends/
+// listAdminUsers are requireAdmin outright — every list here can 403 on a
+// forced URL even though the sidebar hides the link, so callers must branch
+// on isError, not just isPending, per the state-branch requirement.
+
+export const useGrants = (itemId: string) =>
+  useQuery<Grant[]>({ queryKey: ["grants", itemId],
+    queryFn: () => api.get<Grant[]>(`/api/items/${itemId}/grants`), enabled: Boolean(itemId) });
+
+export function useGrantItem(itemId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (v: { subject: Subject; role: "viewer" | "editor" | "owner" }) =>
+      api.post<null>(`/api/items/${itemId}/grants`, v),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["grants", itemId] }),
+  });
+}
+
+export function useRevokeGrant(itemId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (subject: Subject) => api.del<null>(`/api/items/${itemId}/grants`, { subject }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["grants", itemId] }),
+  });
+}
+
+export const useSpaceMembers = (spaceId: string) =>
+  useQuery<SpaceMember[]>({ queryKey: ["spaceMembers", spaceId],
+    queryFn: () => api.get<SpaceMember[]>(`/api/spaces/${spaceId}/members`), enabled: Boolean(spaceId) });
+
+export const useGroups = () =>
+  useQuery<Group[]>({ queryKey: ["groups"], queryFn: () => api.get<Group[]>("/api/groups") });
+
+// Not in the original hook list handed down for this task — Groups.tsx needs
+// a way to create groups and POST /api/groups already exists server-side
+// (Task 1 only added the missing GET), so this is the natural extra hook.
+export function useCreateGroup() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (name: string) => api.post<Group>("/api/groups", { name }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["groups"] }),
+  });
+}
+
+export const useAdminUsers = () =>
+  useQuery<User[]>({ queryKey: ["adminUsers"], queryFn: () => api.get<User[]>("/api/admin/users") });
+
+export function useSetAdmin() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (v: { id: string; is_admin: boolean }) =>
+      api.patch<User>(`/api/admin/users/${v.id}`, { is_admin: v.is_admin }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["adminUsers"] }),
+  });
+}
+
+export const useBackends = () =>
+  useQuery<Backend[]>({ queryKey: ["backends"], queryFn: () => api.get<Backend[]>("/api/admin/backends") });
+
+export function useCreateBackend() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (v: { name: string; config: Record<string, unknown>; makeWriteTarget?: boolean }) =>
+      api.post<Backend>("/api/admin/backends", v),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["backends"] }),
+  });
+}
+
+export function useSetWriteTarget() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => api.post<null>(`/api/admin/backends/${id}/write-target`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["backends"] }),
+  });
+}
+
+export const useProbeBackend = () =>
+  useMutation({ mutationFn: (id: string) => api.post<ProbeResult>(`/api/admin/backends/${id}/probe`) });
+
+export function useDeleteBackend() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => api.del<null>(`/api/admin/backends/${id}`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["backends"] }),
   });
 }
