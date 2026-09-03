@@ -2,7 +2,7 @@ import { NavLink } from "react-router-dom";
 import type { User } from "../api/types";
 import SpaceSwitcher from "./SpaceSwitcher";
 
-export default function Sidebar({ me, spaceId }: { me: User; spaceId: string }) {
+export default function Sidebar({ me, spaceId }: { me: User; spaceId?: string }) {
   const item = (to: string, label: string, end = false) => (
     <NavLink
       to={to}
@@ -18,12 +18,17 @@ export default function Sidebar({ me, spaceId }: { me: User; spaceId: string }) 
       <div className="sidebar-brand">hdrive</div>
       <SpaceSwitcher />
 
-      <div className="nav-group">
-        {item(`/s/${spaceId}`, "My files", true)}
-        {item(`/s/${spaceId}?vis=shared`, "Shared")}
-        {item(`/s/${spaceId}?sort=modified`, "Recent")}
-        {item(`/s/${spaceId}/trash`, "Trash")}
-      </div>
+      {/* No spaceId means the user has no space to scope these links to
+          (e.g. the empty-spaces state, or the id hasn't loaded yet) —
+          render nothing here rather than emit hrefs like "/s/". */}
+      {spaceId && (
+        <div className="nav-group">
+          {item(`/s/${spaceId}`, "My files", true)}
+          {item(`/s/${spaceId}?vis=shared`, "Shared")}
+          {item(`/s/${spaceId}?sort=modified`, "Recent")}
+          {item(`/s/${spaceId}/trash`, "Trash")}
+        </div>
+      )}
 
       {/* Backend enforces requireAdmin on every /admin route regardless, but
           the nav must not offer a destination it cannot deliver. */}

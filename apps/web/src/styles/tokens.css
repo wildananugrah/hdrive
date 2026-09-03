@@ -34,6 +34,13 @@
   --vis-shared:       #3B3BE8;  --vis-shared-bg: #EEEEFD;  --vis-shared-dot: #3B3BE8;
   --vis-public:       #1F7A4C;  --vis-public-bg: #E8F5EE;  --vis-public-dot: #1F7A4C;
 
+  /* Avatar palette — five seeded bg/fg pairs, picked by a hash of the name */
+  --avatar-1-bg: #DEDEFB;  --avatar-1-fg: #3B3BE8;
+  --avatar-2-bg: #E4EEFB;  --avatar-2-fg: #1D4ED8;
+  --avatar-3-bg: #F3E8FF;  --avatar-3-fg: #6B21A8;
+  --avatar-4-bg: #FDE7D6;  --avatar-4-fg: #C2410C;
+  --avatar-5-bg: #E8F5EE;  --avatar-5-fg: #1F7A4C;
+
   /* Dark sidebar variant (the only dark surface in the mockup) */
   --sidebar-dark-bg:        #14161A;
   --sidebar-dark-border:    #22252B;

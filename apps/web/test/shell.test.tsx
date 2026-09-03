@@ -1,7 +1,9 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, expect, test, vi } from "vitest";
+import AppShell from "../src/routes/AppShell";
 import Sidebar from "../src/components/Sidebar";
 import Settings from "../src/routes/Settings";
 import SpaceRedirect from "../src/routes/SpaceRedirect";
@@ -39,7 +41,16 @@ test("admin navigation is hidden from non-admins and shown to admins", () => {
 
 test("nav links point at the current space", () => {
   wrap(<Sidebar me={plain as any} spaceId="space-1" />);
+  expect(screen.getByText(/my files/i).closest("a")).toHaveAttribute("href", "/s/space-1");
+  expect(screen.getByText(/shared/i).closest("a")).toHaveAttribute("href", "/s/space-1?vis=shared");
+  expect(screen.getByText(/recent/i).closest("a")).toHaveAttribute("href", "/s/space-1?sort=modified");
   expect(screen.getByText(/trash/i).closest("a")).toHaveAttribute("href", "/s/space-1/trash");
+});
+
+test("the space-scoped nav group is omitted (not emitted with a broken href) when there is no space id", () => {
+  wrap(<Sidebar me={plain as any} spaceId={undefined} />);
+  expect(screen.queryByText(/my files/i)).toBeNull();
+  expect(screen.queryByText(/trash/i)).toBeNull();
 });
 
 // --- SpaceRedirect: the "belongs to no spaces" case a fresh non-admin user
@@ -72,6 +83,41 @@ test("a user with spaces is redirected to the first one", async () => {
   expect(await screen.findByText("space view")).toBeInTheDocument();
 });
 
+// A 500 from /api/spaces must read as a server fault, not "you have no
+// spaces" — isPending goes false on error just as it does on success with
+// an empty array, so this is a distinct branch, not a subset of the empty case.
+test("a server error loading spaces shows a retry affordance and does not claim the user has no spaces", async () => {
+  vi.stubGlobal("fetch", vi.fn().mockResolvedValue(
+    jsonRes({ error: "internal error" }, 500),
+  ));
+  wrap(
+    <Routes>
+      <Route path="/" element={<SpaceRedirect />} />
+      <Route path="/s/:spaceId" element={<div>space view</div>} />
+    </Routes>,
+    "/",
+  );
+  expect(await screen.findByRole("button", { name: /retry/i })).toBeInTheDocument();
+  expect(screen.queryByText(/not a member of any space/i)).toBeNull();
+  expect(screen.queryByText("space view")).toBeNull();
+});
+
+test("retrying after a spaces error succeeds and redirects", async () => {
+  const fetchMock = vi.fn()
+    .mockResolvedValueOnce(jsonRes({ error: "internal error" }, 500))
+    .mockResolvedValueOnce(jsonRes([{ id: "space-9", name: "Nine", created_at: "2026-01-01" }]));
+  vi.stubGlobal("fetch", fetchMock);
+  wrap(
+    <Routes>
+      <Route path="/" element={<SpaceRedirect />} />
+      <Route path="/s/:spaceId" element={<div>space view</div>} />
+    </Routes>,
+    "/",
+  );
+  await userEvent.click(await screen.findByRole("button", { name: /retry/i }));
+  expect(await screen.findByText("space view")).toBeInTheDocument();
+});
+
 // --- Settings: identity + sign-out only, no fields the API can't save ---
 
 test("settings shows the signed-in identity and offers sign-out, with no editable name or email field", async () => {
@@ -88,4 +134,40 @@ test("settings marks an admin's identity with an Administrator badge", async () 
   vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonRes(admin)));
   wrap(<Settings />, "/settings");
   expect(await screen.findByText("Administrator")).toBeInTheDocument();
+});
+
+// --- AppShell: routes with no :spaceId segment must still get a real space
+// id for the sidebar's space-scoped links, not a dead "/s/" href. ---
+
+const meAndSpacesFetch = (spaces: unknown[]) =>
+  vi.fn((url: string) => Promise.resolve(
+    String(url).includes("/api/spaces") ? jsonRes(spaces) : jsonRes(plain),
+  ));
+
+test("on a route with no :spaceId (e.g. /settings), the shell resolves the sidebar links to the user's first space", async () => {
+  vi.stubGlobal("fetch", meAndSpacesFetch([{ id: "space-7", name: "Seven", created_at: "2026-01-01" }]));
+  wrap(
+    <Routes>
+      <Route element={<AppShell />}>
+        <Route path="/settings" element={<div>settings page</div>} />
+      </Route>
+    </Routes>,
+    "/settings",
+  );
+  expect(await screen.findByText("settings page")).toBeInTheDocument();
+  expect(screen.getByText(/trash/i).closest("a")).toHaveAttribute("href", "/s/space-7/trash");
+});
+
+test("on a route with no :spaceId, a user with no spaces at all gets no space-scoped nav group (no broken hrefs)", async () => {
+  vi.stubGlobal("fetch", meAndSpacesFetch([]));
+  wrap(
+    <Routes>
+      <Route element={<AppShell />}>
+        <Route path="/settings" element={<div>settings page</div>} />
+      </Route>
+    </Routes>,
+    "/settings",
+  );
+  expect(await screen.findByText("settings page")).toBeInTheDocument();
+  expect(screen.queryByText(/my files/i)).toBeNull();
 });

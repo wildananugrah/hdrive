@@ -38,6 +38,23 @@ test("on-brand text colours match the login-panel extraction exactly", () => {
   expect(css).toMatch(/--on-brand-secondary:\s*#D6D6FB/i);
 });
 
+test("the five avatar bg/fg pairs are defined as tokens, not inlined in a component", () => {
+  for (let i = 1; i <= 5; i++) {
+    expect(css).toContain(`--avatar-${i}-bg:`);
+    expect(css).toContain(`--avatar-${i}-fg:`);
+  }
+  expect(css).toMatch(/--avatar-1-bg:\s*#DEDEFB/i);
+  expect(css).toMatch(/--avatar-1-fg:\s*#3B3BE8/i);
+  expect(css).toMatch(/--avatar-2-bg:\s*#E4EEFB/i);
+  expect(css).toMatch(/--avatar-2-fg:\s*#1D4ED8/i);
+  expect(css).toMatch(/--avatar-3-bg:\s*#F3E8FF/i);
+  expect(css).toMatch(/--avatar-3-fg:\s*#6B21A8/i);
+  expect(css).toMatch(/--avatar-4-bg:\s*#FDE7D6/i);
+  expect(css).toMatch(/--avatar-4-fg:\s*#C2410C/i);
+  expect(css).toMatch(/--avatar-5-bg:\s*#E8F5EE/i);
+  expect(css).toMatch(/--avatar-5-fg:\s*#1F7A4C/i);
+});
+
 test("font stacks name the self-hosted faces, with system fallbacks, not a bare system font", () => {
   expect(css).toMatch(/--font-ui:\s*'Bricolage Grotesque'/i);
   expect(css).toMatch(/--font-mono:\s*'IBM Plex Mono'/i);
