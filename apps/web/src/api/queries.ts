@@ -5,7 +5,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "./client";
 import { isUnauthorized } from "./errors";
-import type { User } from "./types";
+import type { Space, User } from "./types";
 
 // ---- Auth (Task 4) ---------------------------------------------------
 
@@ -41,4 +41,10 @@ export function useLogout() {
     mutationFn: () => api.post<null>("/api/auth/logout"),
     onSuccess: () => { qc.setQueryData(["me"], null); qc.clear(); },
   });
+}
+
+// ---- Spaces (Task 5) ---------------------------------------------------
+
+export function useSpaces() {
+  return useQuery<Space[]>({ queryKey: ["spaces"], queryFn: () => api.get<Space[]>("/api/spaces") });
 }
