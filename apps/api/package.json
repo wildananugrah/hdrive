@@ -1,0 +1,13 @@
+{
+  "name": "@hdrive/api",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "migrate": "bun run scripts/migrate.ts",
+    "dev": "bun --hot src/server.ts",
+    "start": "bun src/server.ts",
+    "test": "bun test",
+    "seed:admin": "bun run scripts/seed-admin.ts",
+    "jobs": "bun run scripts/jobs.ts"
+  }
+}
