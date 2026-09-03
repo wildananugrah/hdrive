@@ -73,7 +73,7 @@ spaces           (id, name, created_at)
 space_members    (space_id, subject_type, subject_id, role)
 
 items            (id, space_id, parent_id, kind,           -- 'folder' | 'file'
-                  name, ancestor_ids uuid[],
+                  name, path_ids uuid[],                    -- ancestors + self
                   size, mime, storage_backend_id, storage_key,
                   status,                                   -- 'pending' | 'ready'
                   deleted_at, created_by, created_at)
@@ -92,13 +92,19 @@ share_links      (id, token_hash, item_id, mode, password_hash,
 "highest match wins", `MAX(role)` *is* the resolver. No CASE ladder, no
 application-side comparison, and the ordering can't drift between call sites.
 
-**`ancestor_ids uuid[]`** is a materialized path holding every ancestor id from
-root down. Inheritance means a grant on any ancestor counts; the naive
-implementation is a recursive CTE on every access check. With the array it's one
-indexed predicate (`item_grants.item_id = ANY(item.ancestor_ids)`, GIN index).
+**`path_ids uuid[]`** is a materialized path holding every ancestor id from root
+down **plus the item's own id**. Inheritance means a grant on any ancestor
+counts; the naive implementation is a recursive CTE on every access check. With
+the array it's one indexed predicate (`item_grants.item_id = ANY(item.path_ids)`,
+GIN index).
+
+Including self is what makes a grant placed *directly on a file* resolve — an
+ancestors-only array silently misses it, which is an access-control bug that
+tests pass right over. It also makes subtree operations the same column:
+`path_ids @> ARRAY[:folder_id]` selects the folder and everything under it.
 
 The cost is maintenance on move: moving a subtree rewrites the prefix of every
-descendant's `ancestor_ids`. That is the only place this representation can go
+descendant's `path_ids`. That is the only place this representation can go
 wrong, so it lives in exactly one function (`moveItem`) and gets a test.
 
 **`storage_backend_id` on each item.** The file row remembers where its bytes
@@ -121,7 +127,7 @@ SELECT MAX(role) FROM (
      AND (subject_type,subject_id) IN (('user',$me), ('group',ANY($my_groups)))
   UNION ALL
   SELECT role FROM item_grants
-   WHERE item_id = ANY($ancestor_ids)
+   WHERE item_id = ANY($path_ids)
      AND (subject_type,subject_id) IN (('user',$me), ('group',ANY($my_groups)))
 ) t
 ```
@@ -200,7 +206,9 @@ flags visually.
 ### Trash
 
 `deleted_at` hides the item and keeps it restorable. Deleting a folder is one
-statement: `UPDATE items SET deleted_at = now() WHERE ancestor_ids @> ARRAY[:id]`.
+statement: `UPDATE items SET deleted_at = now() WHERE path_ids @> ARRAY[:id]`
+— which covers the folder itself and every descendant, because `path_ids`
+includes self.
 
 The purge job, after 30 days, deletes each object *through that item's own
 backend* — which is why per-item `storage_backend_id` matters as much for
@@ -241,7 +249,7 @@ dialog, and an admin section for storage backends, users, and groups.
    still reads *and* deletes. This is the stated core requirement, so it gets an
    executable assertion rather than a promise.
 
-Plus one for `moveItem` rewriting `ancestor_ids` across a subtree, since that is
+Plus one for `moveItem` rewriting `path_ids` across a subtree, since that is
 the single place the materialized path can corrupt.
 
 ## 10. Risks
@@ -252,4 +260,4 @@ the single place the materialized path can corrupt.
   changes.
 - **Presign clock skew.** S3-compatible providers reject presigned URLs when
   server time drifts. The connection probe catches it at configuration time.
-- **`ancestor_ids` on deep moves.** Bounded by one function and one test.
+- **`path_ids` on deep moves.** Bounded by one function and one test.
