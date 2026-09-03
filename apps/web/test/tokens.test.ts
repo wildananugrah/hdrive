@@ -12,7 +12,7 @@ const css = readFileSync(join(here, "../src/styles/tokens.css"), "utf8");
 
 test("every token the design depends on is defined", () => {
   for (const name of [
-    "--brand", "--brand-hover", "--brand-tint",
+    "--brand", "--brand-hover", "--brand-tint", "--on-brand", "--on-brand-secondary",
     "--text", "--text-secondary", "--text-tertiary",
     "--bg", "--surface", "--border", "--divider",
     "--success", "--danger", "--warning",
@@ -31,6 +31,11 @@ test("brand and visibility colours match the extracted design exactly", () => {
   expect(css).toMatch(/--vis-shared:\s*#3B3BE8/i);
   expect(css).toMatch(/--vis-public:\s*#1F7A4C/i);
   expect(css).toMatch(/--vis-space:\s*#5B6169/i);
+});
+
+test("on-brand text colours match the login-panel extraction exactly", () => {
+  expect(css).toMatch(/--on-brand:\s*#FFFFFF/i);
+  expect(css).toMatch(/--on-brand-secondary:\s*#D6D6FB/i);
 });
 
 test("font stacks name the self-hosted faces, with system fallbacks, not a bare system font", () => {

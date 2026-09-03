@@ -110,3 +110,45 @@ test("useMe resolves to null (not an error state) when anonymous", async () => {
   expect(result.current.isError).toBe(false);
   expect(result.current.data).toBeNull();
 });
+
+test("a session query failing with a 500 renders the retry affordance and does not navigate to /signin", async () => {
+  vi.stubGlobal("fetch", vi.fn().mockResolvedValue(
+    new Response(JSON.stringify({ error: "internal error" }), {
+      status: 500, headers: { "content-type": "application/json" },
+    }),
+  ));
+  wrap(
+    <Routes>
+      <Route path="/signin" element={<div>sign in page</div>} />
+      <Route element={<RequireAuth />}>
+        <Route path="/" element={<div>secret</div>} />
+      </Route>
+    </Routes>,
+    "/",
+  );
+  expect(await screen.findByRole("button", { name: /retry/i })).toBeInTheDocument();
+  expect(screen.queryByText("sign in page")).toBeNull();
+  expect(screen.queryByText("secret")).toBeNull();
+});
+
+test("clicking Retry refetches and, on success, renders the protected content", async () => {
+  const fetchMock = vi.fn()
+    .mockResolvedValueOnce(new Response(JSON.stringify({ error: "internal error" }), {
+      status: 500, headers: { "content-type": "application/json" },
+    }))
+    .mockResolvedValueOnce(new Response(JSON.stringify({ id: "u1", email: "a@b.com", name: "A", is_admin: false }), {
+      status: 200, headers: { "content-type": "application/json" },
+    }));
+  vi.stubGlobal("fetch", fetchMock);
+  wrap(
+    <Routes>
+      <Route path="/signin" element={<div>sign in page</div>} />
+      <Route element={<RequireAuth />}>
+        <Route path="/" element={<div>secret</div>} />
+      </Route>
+    </Routes>,
+    "/",
+  );
+  await userEvent.click(await screen.findByRole("button", { name: /retry/i }));
+  expect(await screen.findByText("secret")).toBeInTheDocument();
+});

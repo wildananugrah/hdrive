@@ -11,7 +11,7 @@
   gap: 24px;
   padding: 64px;
   background: var(--brand);
-  color: #fff;
+  color: var(--on-brand);
 }
 
 .auth-brand {
@@ -26,7 +26,7 @@
   line-height: 1.05;
   letter-spacing: -0.03em;
   font-weight: 600;
-  color: #D6D6FB;
+  color: var(--on-brand-secondary);
 }
 
 .auth-main {
@@ -70,7 +70,7 @@
   margin-top: 8px;
   border: none;
   background: var(--brand);
-  color: #fff;
+  color: var(--on-brand);
   border-radius: var(--r-control);
   padding: 10px 12px;
   font-size: 14px;
@@ -97,4 +97,25 @@
   margin: 4px 0 0;
   font-size: 13px;
   color: var(--text-secondary);
+}
+
+.auth-retry {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding: 48px 24px;
+  text-align: center;
+  color: var(--text-secondary);
+}
+
+.auth-retry button {
+  border: 1px solid var(--border);
+  background: var(--surface);
+  border-radius: var(--r-control);
+  padding: 8px 16px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+  cursor: pointer;
 }

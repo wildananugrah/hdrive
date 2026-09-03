@@ -5,6 +5,8 @@
   --brand-tint:       #EEEEFD;
   --brand-tint-2:     #DEDEFB;
   --brand-tint-3:     #F7F7FE;
+  --on-brand:           #FFFFFF;
+  --on-brand-secondary: #D6D6FB;
 
   /* Text */
   --text:             #14161A;
