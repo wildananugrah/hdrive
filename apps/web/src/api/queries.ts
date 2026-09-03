@@ -134,3 +134,70 @@ export function useItem(itemId: string) {
 /** attachment (download) by default; ?inline=1 for in-browser playback/viewing. */
 export const contentUrl = (itemId: string, opts: { inline?: boolean } = {}) =>
   `${API_BASE}/api/items/${itemId}/content${opts.inline ? "?inline=1" : ""}`;
+
+// ---- Item actions — rename, move, trash, restore (Task 9) -----------------
+
+/**
+ * Every non-deleted folder in the space, flat, with `path_ids` per folder —
+ * the move picker's data source. `enabled` defaults to true but callers that
+ * only need this while a move modal is open (the common case) should pass
+ * `false` until then, so opening the space doesn't fire it eagerly.
+ */
+export function useSpaceFolders(spaceId: string, enabled = true) {
+  return useQuery<Item[]>({
+    queryKey: ["folders", spaceId],
+    queryFn: () => api.get<Item[]>(`/api/spaces/${spaceId}/folders`),
+    enabled: Boolean(spaceId) && enabled,
+  });
+}
+
+export function useRenameItem(spaceId: string, parentId: string | null) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (v: { id: string; name: string }) =>
+      api.patch<Item>(`/api/items/${v.id}`, { name: v.name }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["children", spaceId, parentId] }),
+  });
+}
+
+export function useMoveItem(spaceId: string, _parentId: string | null) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (v: { id: string; parent_id: string | null }) =>
+      api.patch<Item>(`/api/items/${v.id}`, { parent_id: v.parent_id }),
+    // A move changes two folders' listings (source and destination), so
+    // invalidate every children listing in the space rather than just one —
+    // this key is a prefix of every ["children", spaceId, parentId] key.
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["children", spaceId] }),
+  });
+}
+
+export function useDeleteItem(spaceId: string, parentId: string | null) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => api.del<null>(`/api/items/${id}`),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["children", spaceId, parentId] });
+      qc.invalidateQueries({ queryKey: ["trash", spaceId] });
+    },
+  });
+}
+
+export function useRestoreItem(spaceId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => api.post<null>(`/api/items/${id}/restore`),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["children", spaceId] });
+      qc.invalidateQueries({ queryKey: ["trash", spaceId] });
+    },
+  });
+}
+
+export function useTrash(spaceId: string) {
+  return useQuery<Item[]>({
+    queryKey: ["trash", spaceId],
+    queryFn: () => api.get<Item[]>(`/api/spaces/${spaceId}/trash`),
+    enabled: Boolean(spaceId),
+  });
+}

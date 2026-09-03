@@ -28,7 +28,7 @@ export default function Files() {
       </div>
     )
   ) : (
-    <FileTable items={items ?? []} spaceId={spaceId} spaceName={spaceName} />
+    <FileTable items={items ?? []} spaceId={spaceId} spaceName={spaceName} parentId={itemId} />
   );
 
   return (

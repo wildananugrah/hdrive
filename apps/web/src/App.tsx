@@ -6,6 +6,7 @@ import Item from "./routes/Item";
 import Settings from "./routes/Settings";
 import SignIn from "./routes/SignIn";
 import SpaceRedirect from "./routes/SpaceRedirect";
+import Trash from "./routes/Trash";
 import "./styles/shell.css";
 
 export default function App() {
@@ -15,9 +16,10 @@ export default function App() {
       <Route element={<RequireAuth />}>
         <Route path="/" element={<SpaceRedirect />} />
         <Route element={<AppShell />}>
-          {/* Trash and Admin screens are added in Tasks 9-11. */}
+          {/* Admin screens are added in Tasks 10-11. */}
           <Route path="/s/:spaceId" element={<Files />} />
           <Route path="/s/:spaceId/f/:itemId" element={<Files />} />
+          <Route path="/s/:spaceId/trash" element={<Trash />} />
           <Route path="/i/:itemId" element={<Item />} />
           <Route path="/settings" element={<Settings />} />
         </Route>
