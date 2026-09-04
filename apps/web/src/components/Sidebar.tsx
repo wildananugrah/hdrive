@@ -1,8 +1,11 @@
+import { useState } from "react";
 import { NavLink } from "react-router-dom";
 import type { User } from "../api/types";
+import CreateSpaceModal from "./CreateSpaceModal";
 import SpaceSwitcher from "./SpaceSwitcher";
 
 export default function Sidebar({ me, spaceId }: { me: User; spaceId?: string }) {
+  const [showCreate, setShowCreate] = useState(false);
   const item = (to: string, label: string, end = false) => (
     <NavLink
       to={to}
@@ -16,7 +19,13 @@ export default function Sidebar({ me, spaceId }: { me: User; spaceId?: string })
   return (
     <nav className="sidebar">
       <div className="sidebar-brand">hdrive</div>
-      <SpaceSwitcher />
+      <div className="space-switcher-row">
+        <SpaceSwitcher />
+        <button type="button" className="new-space-btn" onClick={() => setShowCreate(true)}>
+          New space
+        </button>
+      </div>
+      {showCreate && <CreateSpaceModal onClose={() => setShowCreate(false)} />}
 
       {/* No spaceId means the user has no space to scope these links to
           (e.g. the empty-spaces state, or the id hasn't loaded yet) —

@@ -53,6 +53,16 @@ export function useSpaces() {
   return useQuery<Space[]>({ queryKey: ["spaces"], queryFn: () => api.get<Space[]>("/api/spaces") });
 }
 
+// The creator is made OWNER of the new space server-side, in the same
+// transaction — no follow-up grant call needed here.
+export function useCreateSpace() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (name: string) => api.post<Space>("/api/spaces", { name }),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["spaces"] }); },
+  });
+}
+
 // ---- Files (Task 6) ---------------------------------------------------
 
 export function useChildren(spaceId: string, parentId: string | null) {

@@ -1,8 +1,13 @@
-export default function EmptyState({ title, hint }: { title: string; hint?: string }) {
+import type { ReactNode } from "react";
+
+export default function EmptyState(
+  { title, hint, action }: { title: string; hint?: string; action?: ReactNode },
+) {
   return (
     <div className="empty-state">
       <p className="empty-title">{title}</p>
       {hint && <p className="empty-hint">{hint}</p>}
+      {action}
     </div>
   );
 }
