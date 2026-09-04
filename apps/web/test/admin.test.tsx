@@ -394,12 +394,18 @@ const adminUser = (over: Partial<User> = {}): User => ({
 type GroupsFetchState = {
   members: unknown[]; membersStatus?: number; users: User[]; groups: Group[];
   onAdd?: (state: GroupsFetchState) => void;
+  onRemove?: (state: GroupsFetchState, userId: string) => void;
 };
 const groupsFetch = (state: GroupsFetchState) =>
   withMe((url: string, init?: RequestInit) => {
     const u = String(url);
     if (u.includes("/members") && init?.method === "POST") {
       state.onAdd?.(state);
+      return Promise.resolve(res(204, null));
+    }
+    if (u.includes("/members") && init?.method === "DELETE") {
+      const userId = JSON.parse((init.body as string) ?? "{}").user_id;
+      state.onRemove?.(state, userId);
       return Promise.resolve(res(204, null));
     }
     if (u.includes("/members")) {
@@ -444,4 +450,34 @@ test("adding a member updates member_count without a manual refresh", async () =
   // (["groupMembers", id]) — both must be invalidated, or this stays "0
   // members" until an unrelated refetch happens to touch ["groups"].
   await waitFor(() => expect(screen.getByText(/1 member\b/i)).toBeInTheDocument());
+});
+
+test("removing a member updates member_count without a manual refresh", async () => {
+  let removedUserId: string | undefined;
+  const state: GroupsFetchState = {
+    members: [adminUser()], users: [adminUser()], groups: [group({ member_count: 1 })],
+    onRemove: (s, userId) => {
+      removedUserId = userId;
+      s.members = [];
+      s.groups = [group({ member_count: 0 })];
+    },
+  };
+  vi.stubGlobal("fetch", groupsFetch(state));
+  wrap(<Groups />);
+  await screen.findByText("Editors");
+  expect(screen.getByText(/1 member\b/i)).toBeInTheDocument();
+  await userEvent.click(screen.getByRole("button", { name: /manage members/i }));
+  await screen.findByText("Mo Member");
+  await userEvent.click(screen.getByRole("button", { name: /remove/i }));
+
+  // Mirrors the add-path test: the member list drops the row AND
+  // member_count (a separate cache, ["groups"]) decrements without a manual
+  // refresh — dropping either invalidation must fail one of these.
+  // ("Mo Member" alone isn't distinctive enough once removed — a removed
+  // member becomes a candidate again in the "Add a member" <option> list —
+  // so the row's own Remove button and the empty-list copy are checked instead.)
+  await waitFor(() => expect(screen.queryByRole("button", { name: /remove/i })).toBeNull());
+  expect(screen.getByText(/no members yet/i)).toBeInTheDocument();
+  await waitFor(() => expect(screen.getByText(/0 members/i)).toBeInTheDocument());
+  expect(removedUserId).toBe("u2");
 });
