@@ -312,6 +312,22 @@ export function useCreateGroup() {
 export const useAdminUsers = () =>
   useQuery<User[]>({ queryKey: ["adminUsers"], queryFn: () => api.get<User[]>("/api/admin/users") });
 
+// register() takes no admin flag; promoting a new user is a second, separate
+// PATCH, sent only when the caller checked the box — never unconditionally.
+export function useCreateUser() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (v: { name: string; email: string; password: string; isAdmin: boolean }) => {
+      const user = await api.post<User>("/api/auth/register", {
+        email: v.email, password: v.password, name: v.name,
+      });
+      if (v.isAdmin) await api.patch(`/api/admin/users/${user.id}`, { is_admin: true });
+      return user;
+    },
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["adminUsers"] }); },
+  });
+}
+
 export function useSetAdmin() {
   const qc = useQueryClient();
   return useMutation({

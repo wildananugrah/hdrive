@@ -210,6 +210,107 @@ test("a server error loading users shows a retry affordance, never an empty list
   expect(screen.queryByText(/no users/i)).toBeNull();
 });
 
+// ---- Users: creating a new user --------------------------------------------
+
+const fillUserForm = async (over: { name?: string; email?: string; password?: string; admin?: boolean } = {}) => {
+  await userEvent.click(await screen.findByRole("button", { name: /^add user$/i }));
+  await userEvent.type(screen.getByLabelText(/^name$/i), over.name ?? "New Person");
+  await userEvent.type(screen.getByLabelText(/^email$/i), over.email ?? "new.person@example.com");
+  if (over.password !== "") await userEvent.type(screen.getByLabelText(/^password$/i), over.password ?? "correct-horse-battery");
+  if (over.admin) await userEvent.click(screen.getByRole("checkbox", { name: /administrator/i }));
+  await userEvent.click(screen.getByRole("button", { name: /^create user$/i }));
+};
+
+test("creating a user posts register, then only PATCHes admin when checked", async () => {
+  const calls: { url: string; method?: string }[] = [];
+  const fetchMock = withMe((url, init) => {
+    calls.push({ url: String(url), method: init?.method });
+    if (String(url).includes("/auth/register")) return Promise.resolve(res(201, user({ id: "u9", is_admin: false })));
+    return Promise.resolve(res(200, [user()]));
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  wrap(<Users />);
+  await fillUserForm(); // Administrator left unchecked.
+  await screen.findByText(/shown only once/i);
+  const patchCalls = calls.filter((c) => c.method === "PATCH");
+  expect(patchCalls).toHaveLength(0);
+  expect(calls.some((c) => c.url.includes("/auth/register") && c.method === "POST")).toBe(true);
+});
+
+test("checking Administrator also promotes the new user via a second PATCH", async () => {
+  const calls: { url: string; method?: string }[] = [];
+  const fetchMock = withMe((url, init) => {
+    calls.push({ url: String(url), method: init?.method });
+    if (String(url).includes("/auth/register")) return Promise.resolve(res(201, user({ id: "u9", is_admin: false })));
+    if (init?.method === "PATCH") return Promise.resolve(res(200, user({ id: "u9", is_admin: true })));
+    return Promise.resolve(res(200, [user()]));
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  wrap(<Users />);
+  await fillUserForm({ admin: true });
+  await screen.findByText(/shown only once/i);
+  const patchCalls = calls.filter((c) => c.method === "PATCH" && c.url.includes("/u9"));
+  expect(patchCalls).toHaveLength(1);
+});
+
+test("a duplicate email shows the actionable conflict message, not a generic error", async () => {
+  // Deliberately opaque server wording — proves the UI supplies the actionable
+  // copy itself rather than echoing a mock body that already says it.
+  const fetchMock = withMe((url) => {
+    if (String(url).includes("/auth/register")) return Promise.resolve(res(409, { error: "conflict" }));
+    return Promise.resolve(res(200, [user()]));
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  wrap(<Users />);
+  await fillUserForm({ email: "taken@example.com" });
+  const alert = await screen.findByRole("alert");
+  expect(alert).toHaveTextContent(/taken@example\.com is already registered/i);
+  expect(alert.textContent).not.toMatch(/^conflict$/i);
+});
+
+test("a password under 8 characters is refused client-side, without a network round trip", async () => {
+  const fetchMock = withMe(() => Promise.resolve(res(200, [user()])));
+  vi.stubGlobal("fetch", fetchMock);
+  wrap(<Users />);
+  await fillUserForm({ password: "short1" });
+  expect(await screen.findByRole("alert")).toHaveTextContent(/at least 8 characters/i);
+  expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/auth/register"))).toBe(false);
+});
+
+test("the created password is shown once and never reaches storage or the console", async () => {
+  const password = "correct-horse-battery";
+  const fetchMock = withMe((url) => {
+    if (String(url).includes("/auth/register")) return Promise.resolve(res(201, user({ id: "u9", is_admin: false })));
+    return Promise.resolve(res(200, [user()]));
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+  const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+  const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+  try {
+    wrap(<Users />);
+    await fillUserForm({ password });
+    const shown = await screen.findByLabelText(/generated password/i);
+    expect(shown).toHaveValue(password);
+
+    // Never in a fetch URL (query string / path).
+    for (const [url] of fetchMock.mock.calls) expect(String(url)).not.toContain(password);
+    // Never in Web Storage.
+    for (let i = 0; i < localStorage.length; i++) {
+      expect(localStorage.getItem(localStorage.key(i)!)).not.toContain(password);
+    }
+    for (let i = 0; i < sessionStorage.length; i++) {
+      expect(sessionStorage.getItem(sessionStorage.key(i)!)).not.toContain(password);
+    }
+    // Never logged.
+    for (const spy of [logSpy, errorSpy, warnSpy]) {
+      for (const call of spy.mock.calls) expect(call.join(" ")).not.toContain(password);
+    }
+  } finally {
+    logSpy.mockRestore(); errorSpy.mockRestore(); warnSpy.mockRestore();
+  }
+});
+
 // ---- Groups: list with member counts, create -------------------------------
 
 const group = (over: Partial<Group> = {}): Group => ({
