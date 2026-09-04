@@ -314,6 +314,14 @@ export const useAdminUsers = () =>
 
 // register() takes no admin flag; promoting a new user is a second, separate
 // PATCH, sent only when the caller checked the box — never unconditionally.
+//
+// The two calls are not equally required: once register() resolves, the
+// account exists — a PATCH failure must not make the whole mutation reject
+// as if nothing happened (that would hide the new account, skip the
+// one-time password display, and invite a re-submit that just 409s on the
+// email that already succeeded). Only register() failing rejects the
+// mutation; a PATCH failure is caught and reported back via promoteFailed
+// so the caller can still show the password and flag the partial result.
 export function useCreateUser() {
   const qc = useQueryClient();
   return useMutation({
@@ -321,8 +329,15 @@ export function useCreateUser() {
       const user = await api.post<User>("/api/auth/register", {
         email: v.email, password: v.password, name: v.name,
       });
-      if (v.isAdmin) await api.patch(`/api/admin/users/${user.id}`, { is_admin: true });
-      return user;
+      let promoteFailed = false;
+      if (v.isAdmin) {
+        try {
+          await api.patch(`/api/admin/users/${user.id}`, { is_admin: true });
+        } catch {
+          promoteFailed = true;
+        }
+      }
+      return { user, promoteFailed };
     },
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["adminUsers"] }); },
   });

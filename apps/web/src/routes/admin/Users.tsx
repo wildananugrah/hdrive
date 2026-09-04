@@ -26,6 +26,9 @@ export default function Users() {
   // response, so this is the ONLY place it's ever held, and only until the
   // panel is dismissed.
   const [createdPassword, setCreatedPassword] = useState<string | null>(null);
+  // Only meaningful alongside createdPassword — true when register() succeeded
+  // but the follow-up admin PATCH failed, so the account exists unpromoted.
+  const [promoteFailed, setPromoteFailed] = useState(false);
 
   if (me && !me.is_admin) {
     return <EmptyState title="Forbidden" hint="You do not have access to this page." />;
@@ -38,7 +41,7 @@ export default function Users() {
   const toggleForm = () => {
     setShowForm((s) => !s);
     setName(""); setEmail(""); setPassword(""); setIsAdmin(false);
-    setFormError(null); setCreatedPassword(null);
+    setFormError(null); setCreatedPassword(null); setPromoteFailed(false);
     createUser.reset();
   };
 
@@ -55,9 +58,10 @@ export default function Users() {
     createUser.mutate(
       { name: trimmedName, email: normalizedEmail, password, isAdmin },
       {
-        onSuccess: () => {
+        onSuccess: (data) => {
           setName(""); setEmail(""); setPassword(""); setIsAdmin(false);
           setCreatedPassword(enteredPassword);
+          setPromoteFailed(data.promoteFailed);
         },
       },
     );
@@ -77,6 +81,12 @@ export default function Users() {
               Copy this password now — it is shown only once and cannot be recovered. Hdrive does not
               email it; give it to the person directly.
             </p>
+            {promoteFailed && (
+              <p role="alert" className="field-error">
+                The account was created but could not be made an administrator. Promote them from the
+                list below.
+              </p>
+            )}
             <div className="share-created-row">
               <input readOnly aria-label="Generated password" value={createdPassword} />
               <button type="button" onClick={() => navigator.clipboard.writeText(createdPassword)}>

@@ -253,6 +253,39 @@ test("checking Administrator also promotes the new user via a second PATCH", asy
   expect(patchCalls).toHaveLength(1);
 });
 
+// ---- Users: the two calls are not equally required -------------------------
+// register() succeeding means the account exists; a PATCH failure after that
+// must not make the mutation look like it never happened.
+
+test("a register success with a failed promotion still shows the password, invalidates the list, and flags the account as unpromoted", async () => {
+  const client = newClient();
+  const invalidateSpy = vi.spyOn(client, "invalidateQueries");
+  const fetchMock = withMe((url, init) => {
+    if (String(url).includes("/auth/register")) return Promise.resolve(res(201, user({ id: "u9", is_admin: false })));
+    if (init?.method === "PATCH") return Promise.resolve(res(500, { error: "internal error" }));
+    return Promise.resolve(res(200, [user()]));
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  wrap(<Users />, client);
+  await fillUserForm({ admin: true });
+  expect(await screen.findByLabelText(/generated password/i)).toBeInTheDocument();
+  expect(screen.getByText(/could not be made an administrator/i)).toBeInTheDocument();
+  await waitFor(() => expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ["adminUsers"] }));
+});
+
+test("a register failure still rejects the whole mutation — no password panel, no account implied", async () => {
+  const fetchMock = withMe((url) => {
+    if (String(url).includes("/auth/register")) return Promise.resolve(res(500, { error: "internal error" }));
+    return Promise.resolve(res(200, [user()]));
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  wrap(<Users />);
+  await fillUserForm();
+  await screen.findByRole("alert");
+  expect(screen.queryByLabelText(/generated password/i)).toBeNull();
+  expect(screen.queryByText(/shown only once/i)).toBeNull();
+});
+
 test("a duplicate email shows the actionable conflict message, not a generic error", async () => {
   // Deliberately opaque server wording — proves the UI supplies the actionable
   // copy itself rather than echoing a mock body that already says it.
