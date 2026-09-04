@@ -64,6 +64,8 @@ function GroupMembers({ groupId }: { groupId: string }) {
           <p>Could not load users.</p>
           <button type="button" onClick={() => users.refetch()}>Retry</button>
         </div>
+      ) : users.isPending ? (
+        <p className="modal-hint">Loading users…</p>
       ) : (
         <form className="admin-form admin-form-inline" onSubmit={submit}>
           <label htmlFor={`add-member-${groupId}`}>Add a member</label>

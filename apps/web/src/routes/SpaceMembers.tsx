@@ -20,6 +20,12 @@ const ROLE_NAME: Record<Role, "viewer" | "editor" | "owner"> = {
 // rather than applied immediately.
 type PendingSelfAction = { subject: Subject; role?: "viewer" | "editor" | "owner" };
 
+// A generic "remove this member" confirmation — deliberately a separate piece
+// of state from PendingSelfAction above: that one warns about a worse and
+// different consequence (locking yourself out), and both its paths are
+// already covered by tests that must keep working unchanged.
+type PendingRemove = { subject: Subject; name: string };
+
 export default function SpaceMembers() {
   const { spaceId = "" } = useParams();
   const { data: me } = useMe();
@@ -35,6 +41,7 @@ export default function SpaceMembers() {
   const [groupId, setGroupId] = useState("");
   const [groupRole, setGroupRole] = useState<"viewer" | "editor" | "owner">("viewer");
   const [pendingSelf, setPendingSelf] = useState<PendingSelfAction | null>(null);
+  const [pendingRemove, setPendingRemove] = useState<PendingRemove | null>(null);
 
   const submitEmail = (e: FormEvent) => {
     e.preventDefault();
@@ -57,9 +64,13 @@ export default function SpaceMembers() {
     updateRole.mutate({ subject, role: newRole });
   };
 
-  const remove = (subject: Subject, isSelfOwner: boolean) => {
+  // Every removal needs confirmation, not just self-removal (Spec §5.3) — a
+  // mis-clicked Remove in a large space must not revoke someone's access on
+  // the first click. Self-removal keeps its own, distinct modal above because
+  // it warns about a worse consequence (losing your own access).
+  const remove = (subject: Subject, isSelfOwner: boolean, name: string) => {
     if (isSelfOwner) { setPendingSelf({ subject }); return; }
-    removeMember.mutate(subject);
+    setPendingRemove({ subject, name });
   };
 
   const confirmPendingSelf = () => {
@@ -69,12 +80,35 @@ export default function SpaceMembers() {
     setPendingSelf(null);
   };
 
+  const confirmPendingRemove = () => {
+    if (!pendingRemove) return;
+    removeMember.mutate(pendingRemove.subject);
+    setPendingRemove(null);
+  };
+
   const ownershipRequired = (
     <EmptyState
       title="Ownership required"
       hint="You need to be an owner of this space to manage its members."
     />
   );
+
+  // FIX 3: the client cannot see which groups the caller belongs to (useMe()
+  // carries no group memberships), while the API's effective role is the max
+  // across the caller's own row AND every group they're in (perm.ts
+  // effectiveRole). Pre-deriving "am I owner" from members.data alone would
+  // therefore lock out a group-granted owner even though the server would
+  // accept their management calls. So: don't pre-compute ownership at all —
+  // render the management UI once the (VIEWER-gated) members list has loaded,
+  // and let a 403/404 from an actual management call be the "not an owner"
+  // signal instead. The one exception is "add by email": its 404 means
+  // "no user with that email" (thrown before the ownership check server-side)
+  // and must stay a plain inline error, never be read as ownership-related.
+  const managementForbidden =
+    (addMember.isError && isForbidden(addMember.error)) ||
+    (addGroup.isError && (isForbidden(addGroup.error) || isNotFound(addGroup.error))) ||
+    (updateRole.isError && (isForbidden(updateRole.error) || isNotFound(updateRole.error))) ||
+    (removeMember.isError && (isForbidden(removeMember.error) || isNotFound(removeMember.error)));
 
   let body: React.ReactNode;
   // isPending settles to false on error too, so isError is checked explicitly
@@ -93,16 +127,18 @@ export default function SpaceMembers() {
         <button type="button" onClick={() => members.refetch()}>Retry</button>
       </div>
     );
+  } else if (managementForbidden) {
+    body = ownershipRequired;
   } else {
-    const mine = members.data.find((m) => m.subject_type === "user" && m.subject_id === me?.id);
-    if (mine?.role !== OWNER) {
-      body = ownershipRequired;
-    } else {
-      body = (
+    body = (
         <>
           <ul className="admin-list">
             {members.data.map((m) => {
-              const isSelfOwner = m.subject_type === "user" && m.subject_id === me?.id;
+              // Only the row that IS this user's own OWNER grant risks a
+              // self-lockout — a viewer/editor row for "me" has nothing to warn
+              // about, and (post-FIX-3) this UI is shown before ownership is
+              // confirmed, so this can no longer assume "me" implies OWNER.
+              const isSelfOwner = m.subject_type === "user" && m.subject_id === me?.id && m.role === OWNER;
               const subject: Subject = { type: m.subject_type, id: m.subject_id };
               return (
                 <li key={`${m.subject_type}:${m.subject_id}`} className="admin-row">
@@ -124,7 +160,12 @@ export default function SpaceMembers() {
                     <option value="editor">Editor</option>
                     <option value="owner">Owner</option>
                   </select>
-                  <button type="button" onClick={() => remove(subject, isSelfOwner)}>Remove</button>
+                  <button
+                    type="button" aria-label={`Remove ${m.name}`}
+                    onClick={() => remove(subject, isSelfOwner, m.name)}
+                  >
+                    Remove
+                  </button>
                 </li>
               );
             })}
@@ -184,8 +225,7 @@ export default function SpaceMembers() {
           )}
           {addGroup.isError && <p role="alert" className="field-error">{(addGroup.error as Error).message}</p>}
         </>
-      );
-    }
+    );
   }
 
   return (
@@ -204,6 +244,14 @@ export default function SpaceMembers() {
           <button type="button" onClick={confirmPendingSelf}>
             {pendingSelf.role ? "Change my role" : "Remove me"}
           </button>
+        </Modal>
+      )}
+
+      {pendingRemove && (
+        <Modal title="Remove member" onClose={() => setPendingRemove(null)}>
+          <p className="modal-hint">{`Remove ${pendingRemove.name} from this space?`}</p>
+          <button type="button" onClick={() => setPendingRemove(null)}>Cancel</button>
+          <button type="button" onClick={confirmPendingRemove}>Remove</button>
         </Modal>
       )}
     </div>

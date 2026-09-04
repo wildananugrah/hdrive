@@ -35,6 +35,17 @@ const ownerMember = (over: Partial<SpaceMember> = {}): SpaceMember => ({
 const groupMember = (over: Partial<SpaceMember> = {}): SpaceMember => ({
   subject_type: "group", subject_id: "g1", role: 2, name: "Editors", email: null, ...over,
 });
+const otherMember = (over: Partial<SpaceMember> = {}): SpaceMember => ({
+  subject_type: "user", subject_id: "u2", role: 2, name: "Edna Editor", email: "edna@hdrive.test", ...over,
+});
+// "me" (u1) is only a VIEWER by their own direct row — their OWNER access
+// comes solely from being in the "Leads" group, which the client cannot see.
+const selfViewerMember = (over: Partial<SpaceMember> = {}): SpaceMember => ({
+  subject_type: "user", subject_id: "u1", role: 1, name: "Ola Owner", email: "owner@hdrive.test", ...over,
+});
+const ownerGroupMember = (over: Partial<SpaceMember> = {}): SpaceMember => ({
+  subject_type: "group", subject_id: "g1", role: 3, name: "Leads", email: null, ...over,
+});
 
 // Routes every fetch by which endpoint/method it hits, so each test only
 // overrides the responses it cares about. /auth/me always answers `me`
@@ -133,6 +144,29 @@ test("removing your own owner role warns before proceeding", async () => {
   await waitFor(() => expect(onDelete).toHaveBeenCalled());
 });
 
+// FIX 1: removing anyone else must not be a one-click action — a mis-click in
+// a large space should not silently revoke a colleague's access.
+test("removing another member requires confirmation before any DELETE fires", async () => {
+  const onDelete = vi.fn();
+  vi.stubGlobal("fetch", routeFetch({ members: [ownerMember(), otherMember()], onDelete }));
+  wrap();
+  await screen.findByText("Ola Owner");
+  await userEvent.click(screen.getByRole("button", { name: "Remove Edna Editor" }));
+
+  // The trap: asserting "no DELETE fired" before the async mutation path has
+  // had a chance to run passes trivially whether or not the guard exists.
+  // Flush a microtask inside act() so a missing confirmation would actually
+  // have fired its DELETE by the time this assertion runs.
+  await act(async () => { await Promise.resolve(); });
+  expect(onDelete).not.toHaveBeenCalled();
+  expect(screen.getByText(/remove edna editor from this space\?/i)).toBeInTheDocument();
+
+  await userEvent.click(screen.getByRole("button", { name: "Remove" }));
+  await waitFor(() => expect(onDelete).toHaveBeenCalled());
+  const body = JSON.parse((onDelete.mock.calls[0][0] as RequestInit).body as string);
+  expect(body).toEqual({ subject: { type: "user", id: "u2" } });
+});
+
 // Two separate controls can lock you out — Remove (above) and demoting
 // yourself via the role select (here). Both carry their own isSelfOwner
 // guard, so each needs its own test — a passing Remove test says nothing
@@ -154,6 +188,34 @@ test("demoting your own owner role via the select warns before proceeding", asyn
   await waitFor(() => expect(onAdd).toHaveBeenCalled());
   const body = JSON.parse((onAdd.mock.calls[0][0] as RequestInit).body as string);
   expect(body).toEqual({ subject: { type: "user", id: "u1" }, role: "editor" });
+});
+
+// FIX 3: the API's effective role is the max across the caller's own row AND
+// every group they belong to (perm.ts effectiveRole), but useMe() carries no
+// group memberships — the client cannot see that "me" is an owner here only
+// via the "Leads" group. It must not pre-emptively lock the screen for that.
+test("a group-derived owner (own row is only VIEWER, their group is OWNER) can still manage members", async () => {
+  vi.stubGlobal("fetch", routeFetch({ members: [selfViewerMember(), ownerGroupMember()] }));
+  wrap();
+  await screen.findByText("Ola Owner");
+  expect(screen.queryByText(/you need to be an owner/i)).toBeNull();
+  expect(screen.getByLabelText(/add by email/i)).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Remove Leads" })).toBeInTheDocument();
+});
+
+// The flip side of the above: someone with no owner access at all (directly
+// or via a group) must still land on a clear "ownership required" state once
+// the server actually refuses a management call — never a raw 403 message.
+test("a genuine non-owner's forbidden add attempt shows ownership-required, not a raw error", async () => {
+  vi.stubGlobal("fetch", routeFetch({
+    members: [selfViewerMember()], addStatus: 403, addBody: { error: "forbidden" },
+  }));
+  wrap();
+  await screen.findByText("Ola Owner");
+  await userEvent.type(screen.getByLabelText(/add by email/i), "new@hdrive.test");
+  await userEvent.click(screen.getByRole("button", { name: /^add$/i }));
+  expect(await screen.findByText(/you need to be an owner/i)).toBeInTheDocument();
+  expect(screen.queryByText(/forbidden/i)).toBeNull();
 });
 
 test("a 500 renders an error with Retry, never an empty member list", async () => {

@@ -6,9 +6,15 @@ import RenameCell from "../src/components/RenameCell";
 import MoveModal from "../src/components/MoveModal";
 import FileTable from "../src/components/FileTable";
 import Trash from "../src/routes/Trash";
-import { useDeleteItem, useMoveItem, useRenameItem } from "../src/api/queries";
+import { useDeleteItem, useMoveItem, useRenameItem, useRestoreItem, useUploads } from "../src/api/queries";
 import type { Item } from "../src/api/types";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
+
+// useUploads calls uploadFile (the reserve/PUT/finish handshake) — mocked
+// here so the upload-completion invalidation test below can drive it to
+// "done" without a real XHR/S3 round trip.
+vi.mock("../src/api/upload", () => ({ uploadFile: vi.fn() }));
+import { uploadFile } from "../src/api/upload";
 
 const newClient = () =>
   new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
@@ -165,7 +171,25 @@ test("deleting an item invalidates its own folder's children AND the trash — e
   await waitFor(() => {
     expect(spy).toHaveBeenCalledWith({ queryKey: ["children", "s1", "p1"] });
     expect(spy).toHaveBeenCalledWith({ queryKey: ["trash", "s1"] });
+    // FIX 2: deleting changes how much of the space's storage is used — the
+    // Sidebar's usage meter (useSpaceUsage) has nothing else that refetches it.
+    expect(spy).toHaveBeenCalledWith({ queryKey: ["spaceUsage"] });
   });
+});
+
+function RestoreHarness() {
+  const restore = useRestoreItem("s1");
+  return <button onClick={() => restore.mutate("t1")}>restore</button>;
+}
+
+// FIX 2: restoring a trashed item also changes usage.
+test("restoring an item invalidates the storage usage key too", async () => {
+  vi.stubGlobal("fetch", vi.fn(() => Promise.resolve(jsonRes(null, 204))));
+  const qc = newClient();
+  const spy = vi.spyOn(qc, "invalidateQueries");
+  wrap(<RestoreHarness />, qc);
+  await userEvent.click(screen.getByText("restore"));
+  await waitFor(() => expect(spy).toHaveBeenCalledWith({ queryKey: ["spaceUsage"] }));
 });
 
 function MoveHarness() {
@@ -198,6 +222,26 @@ test("renaming an item invalidates its detail cache — the exact useItem key", 
   await waitFor(() => {
     expect(spy).toHaveBeenCalledWith({ queryKey: ["children", "s1", "p1"] });
     expect(spy).toHaveBeenCalledWith({ queryKey: ["item", "i1"] });
+  });
+});
+
+function UploadHarness() {
+  const { start } = useUploads("s1", "p1");
+  return <button onClick={() => start([new File(["hello"], "notes.txt")])}>upload</button>;
+}
+
+// FIX 2: the storage meter (useSpaceUsage) goes stale after an upload
+// completes because nothing invalidates ["spaceUsage"] — this pins the fix
+// at the point where the upload actually finishes.
+test("completing an upload invalidates the storage usage key", async () => {
+  vi.mocked(uploadFile).mockResolvedValue(item({ id: "i1" }));
+  const qc = newClient();
+  const spy = vi.spyOn(qc, "invalidateQueries");
+  wrap(<UploadHarness />, qc);
+  await userEvent.click(screen.getByText("upload"));
+  await waitFor(() => {
+    expect(spy).toHaveBeenCalledWith({ queryKey: ["children", "s1", "p1"] });
+    expect(spy).toHaveBeenCalledWith({ queryKey: ["spaceUsage"] });
   });
 });
 

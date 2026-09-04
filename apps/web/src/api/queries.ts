@@ -104,6 +104,12 @@ export function useUploads(spaceId: string, parentId: string | null) {
       });
       patch(id, { itemId: item.id, error: undefined });
       qc.invalidateQueries({ queryKey: ["children", spaceId, parentId] });
+      // The Sidebar's usage meter (useSpaceUsage) stays mounted for the whole
+      // session and nothing else refetches it — without this it holds its
+      // mount-time value until an unrelated window refocus. ["spaceUsage"] is
+      // a prefix of ["spaceUsage", spaceId], so spaceId doesn't need
+      // threading in here (TanStack prefix-matches invalidation keys).
+      qc.invalidateQueries({ queryKey: ["spaceUsage"] });
     } catch (e) {
       patch(id, { phase: "failed", error: e instanceof Error ? e.message : "upload failed" });
     }
@@ -201,6 +207,8 @@ export function useDeleteItem(spaceId: string, parentId: string | null) {
       qc.invalidateQueries({ queryKey: ["children", spaceId, parentId] });
       qc.invalidateQueries({ queryKey: ["trash", spaceId] });
       qc.invalidateQueries({ queryKey: ["item", id] });
+      // Deleting changes usage — see the comment on useUploads' invalidation.
+      qc.invalidateQueries({ queryKey: ["spaceUsage"] });
     },
   });
 }
@@ -212,6 +220,8 @@ export function useRestoreItem(spaceId: string) {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["children", spaceId] });
       qc.invalidateQueries({ queryKey: ["trash", spaceId] });
+      // Restoring changes usage too — see the comment on useUploads' invalidation.
+      qc.invalidateQueries({ queryKey: ["spaceUsage"] });
     },
   });
 }
