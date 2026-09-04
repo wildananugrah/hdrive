@@ -50,6 +50,7 @@ export async function listSpaces(userId: string) {
 }
 
 export async function addSpaceMember(user: User, spaceId: string, subject: Subject, role: number) {
+  checkUuid(spaceId, "space id");
   checkSubject(subject);
   checkRole(role);
   await requireSpace(user.id, spaceId, OWNER);
@@ -59,7 +60,18 @@ export async function addSpaceMember(user: User, spaceId: string, subject: Subje
     ON CONFLICT (space_id, subject_type, subject_id) DO UPDATE SET role = EXCLUDED.role`;
 }
 
+/** Resolve an email to a user, then reuse the id path. Normalization must
+ *  match register() exactly or an invite silently fails to find the account. */
+export async function addSpaceMemberByEmail(user: User, spaceId: string, email: string, role: number) {
+  const normalized = String(email ?? "").trim().toLowerCase();
+  if (!normalized) throw new HttpError(400, "email is required");
+  const [target] = await sql`SELECT id FROM users WHERE email = ${normalized}`;
+  if (!target) throw new HttpError(404, "no user with that email");
+  await addSpaceMember(user, spaceId, { type: "user", id: target.id }, role);
+}
+
 export async function removeSpaceMember(user: User, spaceId: string, subject: Subject) {
+  checkUuid(spaceId, "space id");
   checkSubject(subject);
   await requireSpace(user.id, spaceId, OWNER);
   await sql`DELETE FROM space_members
@@ -142,6 +154,7 @@ export async function listGroupMembers(user: User, groupId: string) {
  *  contribute nothing, so no kind filter is needed. No quota exists in this
  *  system, so this reports usage against no limit — do not add one. */
 export async function spaceUsage(user: User, spaceId: string): Promise<{ bytes: number; items: number }> {
+  checkUuid(spaceId, "space id");
   await requireSpace(user.id, spaceId, VIEWER);
   const [row] = await sql`
     SELECT COALESCE(SUM(size), 0)::bigint AS bytes, COUNT(*)::int AS items

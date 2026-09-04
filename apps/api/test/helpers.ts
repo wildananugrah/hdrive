@@ -21,8 +21,8 @@ export async function resetDb() {
 }
 
 let seq = 0;
-export async function makeUser(opts: { admin?: boolean; password?: string } = {}) {
-  const email = `u${++seq}-${Date.now()}@test.local`;
+export async function makeUser(opts: { admin?: boolean; password?: string; email?: string } = {}) {
+  const email = opts.email ?? `u${++seq}-${Date.now()}@test.local`;
   const password = opts.password ?? "hunter2hunter2";
   const user = await register(email, password, `User ${seq}`);
   if (opts.admin) {

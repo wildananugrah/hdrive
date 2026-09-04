@@ -1,4 +1,4 @@
-import { body, bool, corsHeaders, json, route, str, withCors, type Req } from "./http.ts";
+import { body, bool, corsHeaders, HttpError, json, route, str, withCors, type Req } from "./http.ts";
 import {
   clearCookie, listUsers, login, logout, register, requireAdmin, requireUser,
   sessionCookie, setUserAdmin, tokenFrom,
@@ -10,7 +10,7 @@ import {
   createBackend, deleteBackend, listBackends, probeBackend, setWriteTarget, updateBackend,
 } from "./backends.ts";
 import {
-  addGroupMember, addSpaceMember, createGroup, createSpace, grantItem,
+  addGroupMember, addSpaceMember, addSpaceMemberByEmail, createGroup, createSpace, grantItem,
   listGroupMembers, listGroups, listItemGrants, listSpaceMembers, listSpaces,
   removeGroupMember, removeSpaceMember, revokeItemGrant, spaceUsage,
   type Subject,
@@ -76,8 +76,12 @@ export const routes = {
     GET: route(async (req) => json(await listSpaceMembers(await requireUser(req), req.params.id))),
     POST: route(async (req) => {
       const u = await requireUser(req);
-      const b = await body<{ subject: Subject; role: string }>(req);
-      await addSpaceMember(u, req.params.id, b.subject, parseRole(b.role));
+      const b = await body<{ subject?: Subject; email?: string; role: string }>(req);
+      if ((b.subject && b.email) || (!b.subject && !b.email)) {
+        throw new HttpError(400, "provide exactly one of subject or email");
+      }
+      if (b.email) await addSpaceMemberByEmail(u, req.params.id, b.email, parseRole(b.role));
+      else await addSpaceMember(u, req.params.id, b.subject!, parseRole(b.role));
       return new Response(null, { status: 204 });
     }),
     DELETE: route(async (req) => {
