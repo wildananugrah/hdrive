@@ -361,8 +361,8 @@ export function useCreateGroup() {
   });
 }
 
-export const useAdminUsers = () =>
-  useQuery<User[]>({ queryKey: ["adminUsers"], queryFn: () => api.get<User[]>("/api/admin/users") });
+export const useAdminUsers = (enabled = true) =>
+  useQuery<User[]>({ queryKey: ["adminUsers"], queryFn: () => api.get<User[]>("/api/admin/users"), enabled });
 
 // register() takes no admin flag; promoting a new user is a second, separate
 // PATCH, sent only when the caller checked the box — never unconditionally.
@@ -440,3 +440,55 @@ export function useDeleteBackend() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ["backends"] }),
   });
 }
+
+// ---- Group membership & storage usage (Task 12) ----------------------------
+// GET|POST|DELETE .../groups/:id/members are admin-only server-side, same as
+// listGroups above — callers must branch on isError, not just isPending.
+// A group grants access to a folder but stays inert until it has members, and
+// member_count lives on the ["groups"] list (a separate cache from
+// ["groupMembers", id]), so add/remove must invalidate both or the count on
+// the groups list goes stale until an unrelated refetch.
+
+type GroupMember = { id: string; email: string; name: string };
+
+export const useGroupMembers = (groupId: string, enabled = true) =>
+  useQuery<GroupMember[]>({
+    queryKey: ["groupMembers", groupId],
+    queryFn: () => api.get<GroupMember[]>(`/api/groups/${groupId}/members`),
+    enabled: Boolean(groupId) && enabled,
+  });
+
+export function useAddGroupMember(groupId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (userId: string) => api.post<null>(`/api/groups/${groupId}/members`, { user_id: userId }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["groupMembers", groupId] });
+      qc.invalidateQueries({ queryKey: ["groups"] });
+    },
+  });
+}
+
+export function useRemoveGroupMember(groupId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (userId: string) => api.del<null>(`/api/groups/${groupId}/members`, { user_id: userId }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["groupMembers", groupId] });
+      qc.invalidateQueries({ queryKey: ["groups"] });
+    },
+  });
+}
+
+// There is deliberately no quota anywhere in this system (see the API's
+// spaceUsage comment) — consumers of this hook must render the raw byte
+// count as plain text only, never a bar or percentage, and must render
+// nothing at all on isError rather than a misleading "0 B".
+type SpaceUsage = { bytes: number; items: number };
+
+export const useSpaceUsage = (spaceId: string) =>
+  useQuery<SpaceUsage>({
+    queryKey: ["spaceUsage", spaceId],
+    queryFn: () => api.get<SpaceUsage>(`/api/spaces/${spaceId}/usage`),
+    enabled: Boolean(spaceId),
+  });

@@ -3,6 +3,7 @@ import { NavLink } from "react-router-dom";
 import type { User } from "../api/types";
 import CreateSpaceModal from "./CreateSpaceModal";
 import SpaceSwitcher from "./SpaceSwitcher";
+import StorageMeter from "./StorageMeter";
 
 export default function Sidebar({ me, spaceId }: { me: User; spaceId?: string }) {
   const [showCreate, setShowCreate] = useState(false);
@@ -52,6 +53,11 @@ export default function Sidebar({ me, spaceId }: { me: User; spaceId?: string })
           </div>
         </>
       )}
+
+      {/* Usage is per-space, same as the nav-group above — no spaceId means
+          no space to report on, so this renders nothing rather than a
+          meaningless total. */}
+      {spaceId && <StorageMeter spaceId={spaceId} />}
 
       <div className="nav-group nav-group-bottom">
         {item("/settings", "Settings")}

@@ -1,10 +1,11 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, expect, test, vi } from "vitest";
 import AppShell from "../src/routes/AppShell";
 import Sidebar from "../src/components/Sidebar";
+import StorageMeter from "../src/components/StorageMeter";
 import Settings from "../src/routes/Settings";
 import SpaceRedirect from "../src/routes/SpaceRedirect";
 
@@ -170,4 +171,33 @@ test("on a route with no :spaceId, a user with no spaces at all gets no space-sc
   );
   expect(await screen.findByText("settings page")).toBeInTheDocument();
   expect(screen.queryByText(/my files/i)).toBeNull();
+});
+
+// --- StorageMeter: there is deliberately no quota anywhere in this system —
+// a bar or percentage would imply a ceiling that does not exist, and "0 B"
+// on a failed request would misstate the user's actual usage. ---
+
+test("the meter shows bytes used with no bar and no percentage", async () => {
+  vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonRes({ bytes: 5_500_000, items: 12 })));
+  wrap(<StorageMeter spaceId="space-1" />);
+  expect(await screen.findByText(/5\.2 MB used/i)).toBeInTheDocument();
+  expect(screen.queryByRole("progressbar")).toBeNull();
+  expect(document.body.textContent).not.toMatch(/%/);
+});
+
+test("a 500 from usage hides the meter rather than showing 0 B", async () => {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonRes({ error: "internal error" }, 500)));
+  render(
+    <QueryClientProvider client={client}>
+      <StorageMeter spaceId="space-1" />
+    </QueryClientProvider>,
+  );
+  // Wait for the query to actually settle into its error state before
+  // asserting nothing rendered — checking "no 0 B" immediately would pass
+  // trivially while the query is still pending (which also renders
+  // nothing), regardless of whether the isError guard exists.
+  await waitFor(() => expect(client.getQueryState(["spaceUsage", "space-1"])?.status).toBe("error"));
+  expect(screen.queryByText(/0 B/i)).toBeNull();
+  expect(document.body.textContent?.trim()).toBe("");
 });

@@ -380,3 +380,68 @@ test("a server error loading groups shows a retry affordance, never an empty lis
   expect(screen.getByRole("button", { name: /retry/i })).toBeInTheDocument();
   expect(screen.queryByText(/no groups yet/i)).toBeNull();
 });
+
+// ---- Groups: membership management (a group is inert until it has members) -
+// Members are chosen from GET /api/admin/users, a distinct admin-only endpoint.
+
+const adminUser = (over: Partial<User> = {}): User => ({
+  id: "u2", email: "mo@hdrive.test", name: "Mo Member", is_admin: false, ...over,
+});
+
+// Routes a group's own fetch mock by endpoint, letting each test only
+// describe the endpoints it cares about. `state` is mutable so a test can
+// change what later responses say (e.g. once a member has been added).
+type GroupsFetchState = {
+  members: unknown[]; membersStatus?: number; users: User[]; groups: Group[];
+  onAdd?: (state: GroupsFetchState) => void;
+};
+const groupsFetch = (state: GroupsFetchState) =>
+  withMe((url: string, init?: RequestInit) => {
+    const u = String(url);
+    if (u.includes("/members") && init?.method === "POST") {
+      state.onAdd?.(state);
+      return Promise.resolve(res(204, null));
+    }
+    if (u.includes("/members")) {
+      return Promise.resolve(res(state.membersStatus ?? 200, state.members));
+    }
+    if (u.includes("/admin/users")) return Promise.resolve(res(200, state.users));
+    return Promise.resolve(res(200, state.groups));
+  });
+
+test("expanding a group lists its members", async () => {
+  vi.stubGlobal("fetch", groupsFetch({ members: [adminUser()], users: [adminUser()], groups: [group()] }));
+  wrap(<Groups />);
+  await screen.findByText("Editors");
+  await userEvent.click(screen.getByRole("button", { name: /manage members/i }));
+  expect(await screen.findByText("Mo Member")).toBeInTheDocument();
+});
+
+test("a server error loading a group's members shows a retry affordance, never an empty list", async () => {
+  vi.stubGlobal("fetch", groupsFetch({ members: [], membersStatus: 500, users: [], groups: [group()] }));
+  wrap(<Groups />);
+  await screen.findByText("Editors");
+  await userEvent.click(screen.getByRole("button", { name: /manage members/i }));
+  expect(await screen.findByRole("alert")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: /retry/i })).toBeInTheDocument();
+  expect(screen.queryByText(/no members yet/i)).toBeNull();
+});
+
+test("adding a member updates member_count without a manual refresh", async () => {
+  const state: GroupsFetchState = {
+    members: [], users: [adminUser()], groups: [group({ member_count: 0 })],
+    onAdd: (s) => { s.members = [adminUser()]; s.groups = [group({ member_count: 1 })]; },
+  };
+  vi.stubGlobal("fetch", groupsFetch(state));
+  wrap(<Groups />);
+  await screen.findByText("Editors");
+  expect(screen.getByText(/0 members/i)).toBeInTheDocument();
+  await userEvent.click(screen.getByRole("button", { name: /manage members/i }));
+  await screen.findByText(/no members yet/i);
+  await userEvent.selectOptions(screen.getByLabelText(/add a member/i), "u2");
+  await userEvent.click(screen.getByRole("button", { name: /^add$/i }));
+  // The count lives in a different cache (["groups"]) than the member list
+  // (["groupMembers", id]) — both must be invalidated, or this stays "0
+  // members" until an unrelated refetch happens to touch ["groups"].
+  await waitFor(() => expect(screen.getByText(/1 member\b/i)).toBeInTheDocument());
+});

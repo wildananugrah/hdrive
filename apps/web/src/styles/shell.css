@@ -79,6 +79,11 @@
   border-top: 1px solid var(--divider);
 }
 
+.storage-meter {
+  margin: 0;
+  padding: 8px 10px 0;
+}
+
 .nav-heading {
   margin: 12px 8px 4px;
 }
@@ -819,6 +824,12 @@
 .admin-row > *:last-child,
 .backend-row > *:last-child {
   margin-left: auto;
+}
+
+.group-members {
+  margin: 8px 0 12px;
+  padding: 12px 0 0 16px;
+  border-left: 2px solid var(--divider);
 }
 
 .backend-probe {
