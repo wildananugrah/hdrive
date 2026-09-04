@@ -133,6 +133,29 @@ test("removing your own owner role warns before proceeding", async () => {
   await waitFor(() => expect(onDelete).toHaveBeenCalled());
 });
 
+// Two separate controls can lock you out — Remove (above) and demoting
+// yourself via the role select (here). Both carry their own isSelfOwner
+// guard, so each needs its own test — a passing Remove test says nothing
+// about whether the select's guard exists.
+test("demoting your own owner role via the select warns before proceeding", async () => {
+  const onAdd = vi.fn();
+  vi.stubGlobal("fetch", routeFetch({ members: [ownerMember()], onAdd }));
+  wrap();
+  await screen.findByText("Ola Owner");
+  await userEvent.selectOptions(screen.getByLabelText(/role for ola owner/i), "editor");
+
+  // Same trap as the Remove test: flush a microtask inside act() so a
+  // missing guard's POST would actually have fired before this assertion.
+  await act(async () => { await Promise.resolve(); });
+  expect(onAdd).not.toHaveBeenCalled();
+  expect(screen.getByText(/lose the ability to manage this space/i)).toBeInTheDocument();
+
+  await userEvent.click(screen.getByRole("button", { name: /change my role/i }));
+  await waitFor(() => expect(onAdd).toHaveBeenCalled());
+  const body = JSON.parse((onAdd.mock.calls[0][0] as RequestInit).body as string);
+  expect(body).toEqual({ subject: { type: "user", id: "u1" }, role: "editor" });
+});
+
 test("a 500 renders an error with Retry, never an empty member list", async () => {
   vi.stubGlobal("fetch", routeFetch({ membersStatus: 500, members: [] }));
   wrap();

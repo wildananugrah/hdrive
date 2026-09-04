@@ -154,23 +154,33 @@ export default function SpaceMembers() {
           )}
 
           {/* GET /api/groups is admin-only server-side, so a non-admin owner
-              has no way to list groups to grant — offer this only to admins. */}
+              has no way to list groups to grant — offer this only to admins.
+              isError is checked explicitly here too: without it, a failed
+              groups fetch silently renders as an empty "Select a group…"
+              list instead of a fault. */}
           {me?.is_admin && (
-            <form className="admin-form admin-form-inline" onSubmit={submitGroup}>
-              <label htmlFor="member-group">Add a group</label>
-              <select
-                id="member-group" value={groupId} onChange={(e) => setGroupId(e.target.value)}
-              >
-                <option value="">Select a group…</option>
-                {(groups.data ?? []).map((g) => <option key={g.id} value={g.id}>{g.name}</option>)}
-              </select>
-              <select aria-label="Group role to add" value={groupRole} onChange={(e) => setGroupRole(e.target.value as any)}>
-                <option value="viewer">Viewer</option>
-                <option value="editor">Editor</option>
-                <option value="owner">Owner</option>
-              </select>
-              <button type="submit" disabled={!groupId || addGroup.isPending}>Add</button>
-            </form>
+            groups.isError ? (
+              <div className="auth-retry" role="alert">
+                <p>Could not load groups.</p>
+                <button type="button" onClick={() => groups.refetch()}>Retry</button>
+              </div>
+            ) : (
+              <form className="admin-form admin-form-inline" onSubmit={submitGroup}>
+                <label htmlFor="member-group">Add a group</label>
+                <select
+                  id="member-group" value={groupId} onChange={(e) => setGroupId(e.target.value)}
+                >
+                  <option value="">Select a group…</option>
+                  {(groups.data ?? []).map((g) => <option key={g.id} value={g.id}>{g.name}</option>)}
+                </select>
+                <select aria-label="Group role to add" value={groupRole} onChange={(e) => setGroupRole(e.target.value as any)}>
+                  <option value="viewer">Viewer</option>
+                  <option value="editor">Editor</option>
+                  <option value="owner">Owner</option>
+                </select>
+                <button type="submit" disabled={!groupId || addGroup.isPending}>Add</button>
+              </form>
+            )
           )}
           {addGroup.isError && <p role="alert" className="field-error">{(addGroup.error as Error).message}</p>}
         </>
