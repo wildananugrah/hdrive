@@ -36,6 +36,7 @@ export default function Sidebar({ me, spaceId }: { me: User; spaceId?: string })
           {item(`/space/${spaceId}?vis=shared`, "Shared")}
           {item(`/space/${spaceId}?sort=modified`, "Recent")}
           {item(`/space/${spaceId}/trash`, "Trash")}
+          {item(`/space/${spaceId}/members`, "Members")}
         </div>
       )}
 

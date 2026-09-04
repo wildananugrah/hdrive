@@ -305,8 +305,50 @@ export const useSpaceMembers = (spaceId: string) =>
   useQuery<SpaceMember[]>({ queryKey: ["spaceMembers", spaceId],
     queryFn: () => api.get<SpaceMember[]>(`/api/spaces/${spaceId}/members`), enabled: Boolean(spaceId) });
 
-export const useGroups = () =>
-  useQuery<Group[]>({ queryKey: ["groups"], queryFn: () => api.get<Group[]>("/api/groups") });
+// GET /api/groups is admin-only server-side (a plain space owner still 403s),
+// so callers that only need it for an admin-only affordance should pass
+// enabled: false otherwise — same shape as useSpaceFolders' enabled param.
+export const useGroups = (enabled = true) =>
+  useQuery<Group[]>({ queryKey: ["groups"], queryFn: () => api.get<Group[]>("/api/groups"), enabled });
+
+// ---- Space membership (Task 5) --------------------------------------------
+// Distinct from the item-level grants above (useGrantItem/useRevokeGrant) —
+// this manages the space's own member list, a different endpoint requiring
+// OWNER on the space rather than on one item.
+
+type MemberRole = "viewer" | "editor" | "owner";
+
+export function useAddSpaceMember(spaceId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    // The API accepts either shape: {email, role} is how a non-admin owner
+    // adds a person (R2 — the user directory is admin-gated, so email is the
+    // only way to identify someone); {subject, role} is how a group is added.
+    mutationFn: (v: { email: string; role: MemberRole } | { subject: Subject; role: MemberRole }) =>
+      api.post<null>(`/api/spaces/${spaceId}/members`, v),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["spaceMembers", spaceId] }),
+  });
+}
+
+// Same endpoint as useAddSpaceMember — it's an upsert — kept as a separate
+// hook because the UI always calls this one with a subject_id already known
+// from the loaded list, never an email.
+export function useUpdateSpaceMemberRole(spaceId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (v: { subject: Subject; role: MemberRole }) =>
+      api.post<null>(`/api/spaces/${spaceId}/members`, v),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["spaceMembers", spaceId] }),
+  });
+}
+
+export function useRemoveSpaceMember(spaceId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (subject: Subject) => api.del<null>(`/api/spaces/${spaceId}/members`, { subject }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["spaceMembers", spaceId] }),
+  });
+}
 
 // Not in the original hook list handed down for this task — Groups.tsx needs
 // a way to create groups and POST /api/groups already exists server-side

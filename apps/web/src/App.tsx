@@ -5,6 +5,7 @@ import Files from "./routes/Files";
 import Item from "./routes/Item";
 import Settings from "./routes/Settings";
 import SignIn from "./routes/SignIn";
+import SpaceMembers from "./routes/SpaceMembers";
 import SpaceRedirect from "./routes/SpaceRedirect";
 import Trash from "./routes/Trash";
 import Unlock from "./routes/share/Unlock";
@@ -27,6 +28,7 @@ export default function App() {
           <Route path="/space/:spaceId" element={<Files />} />
           <Route path="/space/:spaceId/f/:itemId" element={<Files />} />
           <Route path="/space/:spaceId/trash" element={<Trash />} />
+          <Route path="/space/:spaceId/members" element={<SpaceMembers />} />
           <Route path="/i/:itemId" element={<Item />} />
           <Route path="/settings" element={<Settings />} />
           {/* requireAdmin enforces this server-side regardless; each screen
