@@ -82,14 +82,15 @@ test("share: create a link, open it signed out, and revoke it", async ({ page, b
 
   // /share/:token is a client-routed SPA page, so page.goto()'s HTTP status
   // is always 200 — the Vite dev server serves index.html regardless of
-  // whether the token is valid. The real signal is submitting the (this link
-  // has no password) unlock form and observing what the app shows: the
-  // viewer on success, an error alert on a dead link. A brand-new context
-  // proves the link needs no session.
+  // whether the token is valid. The real signal is what the app shows once
+  // it settles: the viewer on success, an error alert on a dead link. Unlock
+  // silently probes with an empty password on mount and skips the form
+  // entirely for a link with no password, so there is no button to click
+  // here — asserting one ever appears would hang forever on the happy path.
+  // A brand-new context proves the link needs no session.
   const anon = await browser.newContext();
   const anonPage = await anon.newPage();
   await anonPage.goto(url);
-  await anonPage.getByRole("button", { name: /unlock/i }).click();
   await expect(anonPage.getByTestId("share-video")).toBeVisible({ timeout: 10_000 });
   await anon.close();
 
@@ -100,12 +101,61 @@ test("share: create a link, open it signed out, and revoke it", async ({ page, b
   // treating the link as revoked server-side.
   await expect(revokeButton).toBeHidden({ timeout: 10_000 });
 
+  // Same reasoning: the mount probe hits a revoked link and lands straight
+  // on the "notfound" phase's alert, no form or click in between.
   const anon2 = await browser.newContext();
   const anonPage2 = await anon2.newPage();
   await anonPage2.goto(url);
-  await anonPage2.getByRole("button", { name: /unlock/i }).click();
   await expect(anonPage2.getByRole("alert")).toBeVisible({ timeout: 10_000 });
   await anon2.close();
+});
+
+test("onboarding: an admin onboards a second user end to end", async ({ page, browser }) => {
+  await signIn(page);
+  const stamp = Date.now();
+  const newUser = { email: `e2e-onboard-${stamp}@example.com`, password: "OnboardMe123!" };
+  const spaceName = `e2e-space-${stamp}`;
+
+  // 1. Admin creates a user with a known password.
+  await page.goto("/admin/users");
+  await page.getByRole("button", { name: /add user/i }).click();
+  await page.getByLabel("Name", { exact: true }).fill("E2E Second User");
+  await page.getByLabel("Email", { exact: true }).fill(newUser.email);
+  await page.getByLabel("Password", { exact: true }).fill(newUser.password);
+  await page.getByRole("button", { name: /create user/i }).click();
+  await expect(page.getByLabel("Generated password")).toHaveValue(newUser.password, { timeout: 10_000 });
+  await page.getByRole("button", { name: "Done", exact: true }).click();
+
+  // 2. Admin creates a space.
+  await page.getByRole("button", { name: /new space/i }).click();
+  await page.getByLabel("Name", { exact: true }).fill(spaceName);
+  await page.getByRole("button", { name: /create space/i }).click();
+  await expect(page).toHaveURL(/\/space\/[^/]+$/, { timeout: 10_000 });
+  const spaceId = page.url().match(/\/space\/([^/?]+)/)?.[1];
+  expect(spaceId).toBeTruthy();
+
+  // 3. Admin adds the new user to the space BY EMAIL as an editor.
+  await page.goto(`/space/${spaceId}/members`);
+  // "Add" is ambiguous with the admin-only "add a group" form beside it —
+  // scope to the form that owns the email input.
+  const addByEmailForm = page.locator("form").filter({ has: page.getByLabel(/add by email/i) });
+  await addByEmailForm.getByLabel(/add by email/i).fill(newUser.email);
+  await addByEmailForm.getByLabel("Role to add").selectOption("editor");
+  await addByEmailForm.getByRole("button", { name: /^add$/i }).click();
+  await expect(page.getByText(newUser.email)).toBeVisible({ timeout: 10_000 });
+
+  // 4. A FRESH browser context signs in as that user — a real second person,
+  // not the admin's own session.
+  const userContext = await browser.newContext();
+  const userPage = await userContext.newPage();
+  await signIn(userPage, newUser);
+
+  // 5. That user sees the space, not the historical dead end.
+  await expect(userPage.getByText(/not a member of any space/i)).toHaveCount(0);
+  await expect(userPage).toHaveURL(new RegExp(`/space/${spaceId}(?:$|[/?])`), { timeout: 10_000 });
+  await expect(userPage.getByLabel(/workspace/i)).toHaveValue(spaceId!);
+  await expect(userPage.getByRole("link", { name: "Members", exact: true })).toBeVisible();
+  await userContext.close();
 });
 
 test("trash: delete then restore returns the file to its folder", async ({ page }) => {
